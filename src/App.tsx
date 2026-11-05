@@ -54,14 +54,18 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [selected, setSelected] = useState<ImageItem | null>(null);
+
   const [bucketUrl, setBucketUrl] = useState(
     "https://manifest-inventory.s3.amazonaws.com"
   );
+
   const [showConfig, setShowConfig] = useState(false);
 
   const images = useMemo(() => {
     return sampleImages.filter((item) =>
-      `${item.title} ${item.key}`.toLowerCase().includes(query.toLowerCase())
+      `${item.title} ${item.key}`
+        .toLowerCase()
+        .includes(query.toLowerCase())
     );
   }, [query]);
 
@@ -74,6 +78,7 @@ export default function App() {
       if (images.length === 0) return;
 
       const currentIndex = selectedIndex >= 0 ? selectedIndex : 0;
+
       const nextIndex =
         (currentIndex + direction + images.length) % images.length;
 
@@ -100,11 +105,15 @@ export default function App() {
     };
 
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, [selected, move]);
 
   return (
     <div className="app-shell">
+
       <header className="topbar">
         <div>
           <h1>Archive Image Viewer</h1>
@@ -112,7 +121,9 @@ export default function App() {
         </div>
 
         <div className="user-actions">
-          <span>{user?.signInDetails?.loginId ?? "Signed in"}</span>
+          <span>
+            {user?.signInDetails?.loginId ?? "Signed in"}
+          </span>
 
           <button
             type="button"
@@ -128,59 +139,85 @@ export default function App() {
       </header>
 
       <main className="viewer">
+
         {showConfig && (
           <section className="config-panel">
             <h2>S3 connection</h2>
+
             <p>
-              This currently displays the configured S3 location. The image
-              collection below is still using sample images.
+              This currently displays the configured S3 location.
+              The image collection below is still using sample images.
             </p>
 
-            <label htmlFor="bucketUrl">S3 or CloudFront base URL</label>
+            <label htmlFor="bucketUrl">
+              S3 or CloudFront base URL
+            </label>
+
             <input
               id="bucketUrl"
               type="text"
               value={bucketUrl}
-              onChange={(event) => setBucketUrl(event.target.value)}
+              onChange={(event) =>
+                setBucketUrl(event.target.value)
+              }
             />
           </section>
         )}
 
         <section className="toolbar">
+
           <input
             type="search"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) =>
+              setQuery(event.target.value)
+            }
             placeholder="Search filename or title"
             aria-label="Search images"
           />
 
-          <button type="button" onClick={() => setView("grid")}>
+          <button
+            type="button"
+            onClick={() => setView("grid")}
+          >
             Grid
           </button>
 
-          <button type="button" onClick={() => setView("list")}>
+          <button
+            type="button"
+            onClick={() => setView("list")}
+          >
             List
           </button>
+
         </section>
 
         <section className="collection-heading">
+
           <div>
             <h2>Collection</h2>
+
             <p>
-              {images.length} {images.length === 1 ? "image" : "images"}
+              {images.length}{" "}
+              {images.length === 1
+                ? "image"
+                : "images"}
             </p>
           </div>
 
           <small>{bucketUrl}</small>
+
         </section>
 
         {images.length === 0 && (
-          <div className="empty-state">No images match "{query}".</div>
+          <div className="empty-state">
+            No images match "{query}".
+          </div>
         )}
 
         {images.length > 0 && view === "grid" && (
           <div className="image-grid">
+
             {images.map((image) => (
               <button
                 type="button"
@@ -188,20 +225,28 @@ export default function App() {
                 key={image.key}
                 onClick={() => setSelected(image)}
               >
-                <img src={image.url} alt={image.title} loading="lazy" />
+
+                <img
+                  src={image.url}
+                  alt={image.title}
+                  loading="lazy"
+                />
 
                 <div>
                   <strong>{image.title}</strong>
                   <span>{image.key}</span>
                   <small>{image.size}</small>
                 </div>
+
               </button>
             ))}
+
           </div>
         )}
 
         {images.length > 0 && view === "list" && (
           <div className="image-list">
+
             {images.map((image) => (
               <button
                 type="button"
@@ -209,7 +254,12 @@ export default function App() {
                 key={image.key}
                 onClick={() => setSelected(image)}
               >
-                <img src={image.url} alt={image.title} loading="lazy" />
+
+                <img
+                  src={image.url}
+                  alt={image.title}
+                  loading="lazy"
+                />
 
                 <div>
                   <strong>{image.title}</strong>
@@ -217,10 +267,13 @@ export default function App() {
                 </div>
 
                 <small>{image.size}</small>
+
               </button>
             ))}
+
           </div>
         )}
+
       </main>
 
       {selected && (
@@ -231,6 +284,7 @@ export default function App() {
           aria-label={`Viewing ${selected.title}`}
           onClick={() => setSelected(null)}
         >
+
           <button
             className="lightbox-close"
             type="button"
@@ -252,16 +306,28 @@ export default function App() {
 
           <div
             className="lightbox-content"
-            onClick={(event) => event.stopPropagation()}
+            onClick={(event) =>
+              event.stopPropagation()
+            }
           >
-            <img src={selected.url} alt={selected.title} />
+
+            <img
+              src={selected.url}
+              alt={selected.title}
+            />
 
             <h2>{selected.title}</h2>
+
             <p>{selected.key}</p>
 
-            <a href={selected.url} target="_blank" rel="noreferrer">
+            <a
+              href={selected.url}
+              target="_blank"
+              rel="noreferrer"
+            >
               Open original
             </a>
+
           </div>
 
           <button
@@ -274,8 +340,10 @@ export default function App() {
           >
             Next
           </button>
+
         </div>
       )}
+
     </div>
   );
 }
