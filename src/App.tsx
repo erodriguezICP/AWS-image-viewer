@@ -13,37 +13,37 @@ const sampleImages: ImageItem[] = [
   {
     key: "archive/photograph-001.jpg",
     title: "Museum facade",
-    url: "https://images.unsplash.com/photo-1561214115-f2f134cc4912?auto=format&fit=crop&w=1200&q=80",
+    url: "https://images.unsplash.com/photo-1561214115-f2f134cc4912?auto=format&fit=crop&w=700&q=80",
     size: "2.4 MB",
   },
   {
     key: "archive/photograph-002.jpg",
     title: "Gallery installation",
-    url: "https://images.unsplash.com/photo-1549490349-8643362247b5?auto=format&fit=crop&w=1200&q=80",
+    url: "https://images.unsplash.com/photo-1549490349-8643362247b5?auto=format&fit=crop&w=700&q=80",
     size: "1.8 MB",
   },
   {
     key: "archive/photograph-003.jpg",
     title: "Sculpture study",
-    url: "https://images.unsplash.com/photo-1547891654-e66ed7ebb968?auto=format&fit=crop&w=1200&q=80",
+    url: "https://images.unsplash.com/photo-1547891654-e66ed7ebb968?auto=format&fit=crop&w=700&q=80",
     size: "3.1 MB",
   },
   {
     key: "archive/photograph-004.jpg",
     title: "Collection detail",
-    url: "https://images.unsplash.com/photo-1577083552431-6e5fd01aa342?auto=format&fit=crop&w=1200&q=80",
+    url: "https://images.unsplash.com/photo-1577083552431-6e5fd01aa342?auto=format&fit=crop&w=700&q=80",
     size: "2.0 MB",
   },
   {
     key: "archive/photograph-005.jpg",
     title: "Exhibition room",
-    url: "https://images.unsplash.com/photo-1577083288073-40892c0860a4?auto=format&fit=crop&w=1200&q=80",
+    url: "https://images.unsplash.com/photo-1577083288073-40892c0860a4?auto=format&fit=crop&w=700&q=80",
     size: "2.7 MB",
   },
   {
     key: "archive/photograph-006.jpg",
     title: "Archive object",
-    url: "https://images.unsplash.com/photo-1564399579883-451a5d44ec08?auto=format&fit=crop&w=1200&q=80",
+    url: "https://images.unsplash.com/photo-1564399579883-451a5d44ec08?auto=format&fit=crop&w=700&q=80",
     size: "1.5 MB",
   },
 ];
