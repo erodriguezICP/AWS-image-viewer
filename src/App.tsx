@@ -1,74 +1,76 @@
-import { useEffect, useState } from "react";
-import type { Schema } from "../amplify/data/resource";
 import { useAuthenticator } from "@aws-amplify/ui-react";
-import { generateClient } from "aws-amplify/data";
-
-const client = generateClient<Schema>();
 
 function App() {
-  const [todos, setTodos] =
-    useState<Array<Schema["Todo"]["type"]>>([]);
+  const { user, signOut } = useAuthenticator();
 
-  const { signOut } = useAuthenticator();
-
-  useEffect(() => {
-    const subscription =
-      client.models.Todo.observeQuery().subscribe({
-        next: (data) => {
-          setTodos([...data.items]);
-        },
-      });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  function createTodo() {
-    const content = window.prompt("Todo content");
-
-    if (!content) {
-      return;
-    }
-
-    client.models.Todo.create({
-      content,
-    });
-  }
+  const username =
+    user?.signInDetails?.loginId ||
+    user?.username ||
+    "User";
 
   return (
-    <main>
-      <h1>My todos</h1>
+    <main
+      style={{
+        minHeight: "100vh",
+        backgroundColor: "#f4f6f8",
+        fontFamily: "Arial, Helvetica, sans-serif",
+      }}
+    >
+      <header
+        style={{
+          backgroundColor: "#102a43",
+          color: "#ffffff",
+          padding: "24px",
+        }}
+      >
+        <h1 style={{ margin: "0 0 8px" }}>
+          Amplify Image Viewer
+        </h1>
 
-      <button type="button" onClick={createTodo}>
-        + new
-      </button>
+        <p style={{ margin: 0 }}>
+          Signed in as {username}
+        </p>
+      </header>
 
-      <button type="button" onClick={signOut}>
-        Sign out
-      </button>
+      <section
+        style={{
+          maxWidth: "1000px",
+          margin: "40px auto",
+          padding: "30px",
+          backgroundColor: "#ffffff",
+          borderRadius: "12px",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+        }}
+      >
+        <h2>Deployment successful</h2>
 
-      <ul>
-        {todos.map((todo) => (
-          <li key={todo.id}>
-            {todo.content}
-          </li>
-        ))}
-      </ul>
+        <p>
+          Your React application is running successfully
+          with AWS Amplify authentication.
+        </p>
 
-      <div>
-        🥳 App successfully hosted. Try creating a new todo.
+        <p>
+          The next step is connecting this application
+          to your S3 image bucket.
+        </p>
 
-        <br />
-
-        <a
-          href="https://docs.amplify.aws/react/start/quickstart/#make-frontend-updates"
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
+          onClick={signOut}
+          style={{
+            marginTop: "20px",
+            padding: "12px 20px",
+            border: "none",
+            borderRadius: "8px",
+            backgroundColor: "#0073bb",
+            color: "#ffffff",
+            cursor: "pointer",
+            fontSize: "16px",
+          }}
         >
-          Review next step of this tutorial.
-        </a>
-      </div>
+          Sign Out
+        </button>
+      </section>
     </main>
   );
 }
