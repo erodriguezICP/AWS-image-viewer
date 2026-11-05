@@ -13,10 +13,6 @@ import {
   ExternalLink,
   AlertCircle,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-
 const sampleImages = [
   { key: "archive/photograph-001.jpg", title: "Museum facade", url: "https://images.unsplash.com/photo-1561214115-f2f134cc4912?auto=format&fit=crop&w=1200&q=80", size: "2.4 MB" },
   { key: "archive/photograph-002.jpg", title: "Gallery installation", url: "https://images.unsplash.com/photo-1549490349-8643362247b5?auto=format&fit=crop&w=1200&q=80", size: "1.8 MB" },
