@@ -14,15 +14,7 @@ const ARCHIVE_PATH = "Key_Manifest/";
 const S3_BUCKET = {
   bucketName: "manifest-inventory",
   region: "us-east-1",
-
-const listResult = await list({
-  path: ARCHIVE_PATH,
-  options: {
-  listAll: true,
-  bucket: S3_BUCKET,
-  },
-});
-
+};
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
 
 function getFileName(path: string): string {
@@ -51,9 +43,17 @@ export default function App() {
         setLoading(true);
         setError("");
 
-  const imageObjects = listResult.items.filter((item) =>
-     IMAGE_FILE.test(item.path),
- );
+        const listResult = await list({
+          path: ARCHIVE_PATH,
+          options: {
+            listAll: true,
+            bucket: S3_BUCKET,
+          },
+        });
+
+        const imageObjects = listResult.items.filter((item) =>
+          IMAGE_FILE.test(item.path),
+        );
 
         const loadedImages = await Promise.all(
           imageObjects.map(async (item): Promise<ArchiveImage> => {
@@ -82,9 +82,7 @@ export default function App() {
       } catch (err) {
         console.error("Failed to load archive images:", err);
         if (!cancelled) {
-          setError(
-            "Unable to load archive images. Check Amplify authentication, S3 permissions, CORS, bucket region, and the Key_Manifest path.",
-          );
+          setError("Unable to load archive images. Check S3 access and Key_Manifest/.");
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -99,11 +97,9 @@ export default function App() {
 
   useEffect(() => {
     if (!selected) return;
-
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelected(null);
     };
-
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [selected]);
@@ -179,12 +175,7 @@ export default function App() {
           }}
         >
           <div className="lightbox-content">
-            <button
-              type="button"
-              className="close-button"
-              onClick={() => setSelected(null)}
-              aria-label="Close image viewer"
-            >
+            <button type="button" className="close-button" onClick={() => setSelected(null)} aria-label="Close image viewer">
               ×
             </button>
             <img src={selected.url} alt={selected.name} />
