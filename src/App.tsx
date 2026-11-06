@@ -10,11 +10,19 @@ type ArchiveImage = {
   lastModified?: Date;
 };
 
-const ARCHIVE_PATH = "Key_Manifest/*";
+const ARCHIVE_PATH = "Key_Manifest/";
 const S3_BUCKET = {
   bucketName: "manifest-inventory",
   region: "us-east-1",
-};
+
+const listResult = await list({
+  path: ARCHIVE_PATH,
+  options: {
+  listAll: true,
+  bucket: S3_BUCKET,
+  },
+});
+
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
 
 function getFileName(path: string): string {
@@ -43,17 +51,9 @@ export default function App() {
         setLoading(true);
         setError("");
 
-        const listResult = await list({
-          path: ARCHIVE_PATH,
-          options: {
-            listAll: true,
-            bucket: S3_BUCKET,
-          },
-        });
-
-        const imageObjects = listResult.items.filter((item) =>
-          IMAGE_FILE.test(item.path),
-        );
+  const imageObjects = listResult.items.filter((item) =>
+     IMAGE_FILE.test(item.path),
+ );
 
         const loadedImages = await Promise.all(
           imageObjects.map(async (item): Promise<ArchiveImage> => {
