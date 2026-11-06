@@ -9,11 +9,13 @@ type ArchiveImage = {
   size?: number;
   lastModified?: Date;
 };
-const S3_BUCKET = {
-  bucketName: "manifest-inventory",
-  region: "us-east-1",
-};
 const ARCHIVE_PATH = "Key_Manifest/";
+
+const S3_BUCKET = {
+bucketName: "manifest-inventory",
+region: "us-east-1",
+};
+
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
 
 function getFileName(path: string): string {
@@ -42,37 +44,45 @@ export default function App() {
         setLoading(true);
         setError("");
 
-    const result = await list({
-  path: "Key_Manifest/",
+const result = await list({
+  path: ARCHIVE_PATH,
   options: {
     listAll: true,
     bucket: S3_BUCKET,
   },
 });
 
-        const imageObjects = result.items.filter((item) =>
-          IMAGE_FILE.test(item.path),
-        );
-
-        const loadedImages = await Promise.all(
-          imageObjects.map(async (item): Promise<ArchiveImage> => {
-        const signedUrl = await getUrl({ 
-          path: item.path,
-          options: {
-            bucket: S3_BUCKET,
-            expiresIn: 3600,
+const result = await list({
+  path: ARCHIVE_PATH,
+  options: {
+    listAll: true,
+    bucket: S3_BUCKET,
   },
 });
 
-            return {
-              path: item.path,
-              name: getFileName(item.path),
-              url: signedUrl.url.toString(),
-              size: item.size,
-              lastModified: item.lastModified,
-            };
-          }),
-        );
+const imageObjects = result.items.filter((item) =>
+  IMAGE_FILE.test(item.path),
+);
+
+const loadedImages = await Promise.all(
+  imageObjects.map(async (item): Promise<ArchiveImage> => {
+    const signedUrl = await getUrl({
+      path: item.path,
+      options: {
+        bucket: S3_BUCKET,
+        expiresIn: 3600,
+      },
+    });
+
+    return {
+      path: item.path,
+      name: getFileName(item.path),
+      url: signedUrl.url.toString(),
+      size: item.size,
+      lastModified: item.lastModified,
+    };
+  }),
+);
 
         if (!cancelled) {
           loadedImages.sort((a, b) => a.name.localeCompare(b.name));
