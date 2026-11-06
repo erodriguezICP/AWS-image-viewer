@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { useAuthenticator } from "@aws-amplify/ui-react";
+import { useMemo, useState } from "react";
 import "./App.css";
 
 type ArchiveImage = {
@@ -8,287 +7,189 @@ type ArchiveImage = {
   description: string;
   category: string;
   date: string;
-  src: string;
-  alt: string;
+  url: string;
 };
 
 const archiveImages: ArchiveImage[] = [
   {
     id: 1,
-    title: "Archive Photograph 001",
-    description: "Historic archive photograph.",
-    category: "Photography",
-    date: "1940",
-    src: "/images/archive-001.jpg",
-    alt: "Archive photograph 001",
+    title: "Archive Image 1",
+    description: "Historical archive image",
+    category: "Archive",
+    date: "2026-01-01",
+    url: "https://placehold.co/800x600?text=Archive+Image+1",
   },
   {
     id: 2,
-    title: "Archive Photograph 002",
-    description: "Historic city photograph.",
-    category: "City",
-    date: "1952",
-    src: "/images/archive-002.jpg",
-    alt: "Archive photograph 002",
+    title: "Archive Image 2",
+    description: "Historical archive image",
+    category: "Archive",
+    date: "2026-02-01",
+    url: "https://placehold.co/800x600?text=Archive+Image+2",
   },
   {
     id: 3,
-    title: "Archive Photograph 003",
-    description: "Portrait from the photographic archive.",
-    category: "Portrait",
-    date: "1965",
-    src: "/images/archive-003.jpg",
-    alt: "Archive photograph 003",
-  },
-  {
-    id: 4,
-    title: "Archive Photograph 004",
-    description: "Documentary image from the collection.",
-    category: "Documentary",
-    date: "1971",
-    src: "/images/archive-004.jpg",
-    alt: "Archive photograph 004",
+    title: "Archive Image 3",
+    description: "Historical archive image",
+    category: "Documents",
+    date: "2026-03-01",
+    url: "https://placehold.co/800x600?text=Archive+Image+3",
   },
 ];
 
 function App() {
-  const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("All");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("All");
   const [selectedImage, setSelectedImage] =
     useState<ArchiveImage | null>(null);
 
-  const categories = useMemo(() => {
-    return ["All", ...new Set(archiveImages.map((image) => image.category))];
+  const categories = useMemo<string[]>(() => {
+    return [
+      "All",
+      ...Array.from(
+        new Set(archiveImages.map((image: ArchiveImage) => image.category))
+      ),
+    ];
   }, []);
 
-  const filteredImages = useMemo(() => {
-    const searchTerm = search.toLowerCase().trim();
+  const filteredImages = useMemo<ArchiveImage[]>(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
 
-    return archiveImages.filter((image) => {
+    return archiveImages.filter((image: ArchiveImage) => {
+      const matchesSearch =
+        normalizedSearch === "" ||
+        image.title.toLowerCase().includes(normalizedSearch) ||
+        image.description.toLowerCase().includes(normalizedSearch) ||
+        image.category.toLowerCase().includes(normalizedSearch) ||
+        image.date.toLowerCase().includes(normalizedSearch);
+
       const matchesCategory =
-        category === "All" || image.category === category;
+        selectedCategory === "All" ||
+        image.category === selectedCategory;
 
-      const searchableText = [
-        image.title,
-        image.description,
-        image.category,
-        image.date,
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      const matchesSearch = searchableText.includes(searchTerm);
-
-      return matchesCategory && matchesSearch;
+      return matchesSearch && matchesCategory;
     });
-  }, [search, category]);
-
-  function closeViewer() {
-    setSelectedImage(null);
-  }
-
-  function showPreviousImage() {
-    if (!selectedImage) return;
-
-    const currentIndex = filteredImages.findIndex(
-      (image) => image.id === selectedImage.id
-    );
-
-    if (currentIndex <= 0) {
-      setSelectedImage(filteredImages[filteredImages.length - 1]);
-    } else {
-      setSelectedImage(filteredImages[currentIndex - 1]);
-    }
-  }
-
-  function showNextImage() {
-    if (!selectedImage) return;
-
-    const currentIndex = filteredImages.findIndex(
-      (image) => image.id === selectedImage.id
-    );
-
-    if (currentIndex === filteredImages.length - 1) {
-      setSelectedImage(filteredImages[0]);
-    } else {
-      setSelectedImage(filteredImages[currentIndex + 1]);
-    }
-  }
+  }, [searchTerm, selectedCategory]);
 
   return (
     <div className="app">
-      <header className="archive-header">
-        <div className="header-content">
-          <p className="eyebrow">DIGITAL COLLECTION</p>
-
+      <header className="app-header">
+        <div>
           <h1>Archive Image Viewer</h1>
-
-          <p className="header-description">
-            Search and explore photographs from the digital archive.
+          <p>
+            Search, browse, and view images from the archive.
           </p>
         </div>
       </header>
 
-      <main className="archive-main">
-        <section className="search-panel">
-          <div className="search-container">
-            <label htmlFor="archive-search">Search the archive</label>
+      <main className="app-main">
+        <section className="search-section">
+          <input
+            type="search"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Search archive..."
+            aria-label="Search archive"
+          />
 
-            <input
-              id="archive-search"
-              type="search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search title, description, year, or category..."
-            />
-          </div>
-
-          <div className="filter-container">
-            <label htmlFor="category-filter">Category</label>
-
-            <select
-              id="category-filter"
-              value={category}
-              onChange={(event) => setCategory(event.target.value)}
-            >
-              {categories.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={selectedCategory}
+            onChange={(event) =>
+              setSelectedCategory(event.target.value)
+            }
+            aria-label="Filter by category"
+          >
+            {categories.map((item: string) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
         </section>
 
-        <section className="archive-results">
-          <div className="results-header">
-            <h2>Collection</h2>
+        <section className="results-header">
+          <h2>Images</h2>
 
-            <p>
-              {filteredImages.length}{" "}
-              {filteredImages.length === 1 ? "image" : "images"}
-            </p>
-          </div>
+          <span>
+            {filteredImages.length}{" "}
+            {filteredImages.length === 1 ? "image" : "images"}
+          </span>
+        </section>
 
-          {filteredImages.length > 0 ? (
-            <div className="image-grid">
-              {filteredImages.map((image) => (
-                <article
-                  className="image-card"
-                  key={image.id}
-                  onClick={() => setSelectedImage(image)}
-                >
-                  <div className="thumbnail-container">
-                    <img
-                      src={image.src}
-                      alt={image.alt}
-                      loading="lazy"
-                    />
-                  </div>
-
-                  <div className="image-info">
-                    <div className="image-meta">
-                      <span>{image.category}</span>
-                      <span>{image.date}</span>
-                    </div>
-
-                    <h3>{image.title}</h3>
-
-                    <p>{image.description}</p>
-
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setSelectedImage(image);
-                      }}
-                    >
-                      View image
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="no-results">
-              <h3>No images found</h3>
-              <p>Try another keyword or category.</p>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setSearch("");
-                  setCategory("All");
-                }}
+        {filteredImages.length > 0 ? (
+          <section className="image-grid">
+            {filteredImages.map((image: ArchiveImage) => (
+              <article
+                className="image-card"
+                key={image.id}
+                onClick={() => setSelectedImage(image)}
               >
-                Clear search
-              </button>
-            </div>
-          )}
-        </section>
+                <img
+                  src={image.url}
+                  alt={image.title}
+                  loading="lazy"
+                />
+
+                <div className="image-info">
+                  <h3>{image.title}</h3>
+                  <p>{image.description}</p>
+
+                  <div className="image-meta">
+                    <span>{image.category}</span>
+                    <span>{image.date}</span>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </section>
+        ) : (
+          <section className="empty-state">
+            <h2>No images found</h2>
+            <p>
+              Try changing your search term or category.
+            </p>
+          </section>
+        )}
       </main>
 
       {selectedImage && (
         <div
-          className="viewer-overlay"
+          className="image-modal"
           role="dialog"
           aria-modal="true"
           aria-label={selectedImage.title}
-          onClick={closeViewer}
+          onClick={() => setSelectedImage(null)}
         >
           <div
-            className="viewer"
+            className="image-modal-content"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="viewer-toolbar">
-              <div>
-                <strong>{selectedImage.title}</strong>
-                <span>
-                  {selectedImage.category} · {selectedImage.date}
-                </span>
-              </div>
+            <button
+              className="modal-close"
+              type="button"
+              onClick={() => setSelectedImage(null)}
+              aria-label="Close image"
+            >
+              ×
+            </button>
 
-              <button
-                className="close-button"
-                type="button"
-                onClick={closeViewer}
-                aria-label="Close image viewer"
-              >
-                ×
-              </button>
-            </div>
+            <img
+              src={selectedImage.url}
+              alt={selectedImage.title}
+            />
 
-            <div className="viewer-image-area">
-              {filteredImages.length > 1 && (
-                <button
-                  className="navigation-button previous"
-                  type="button"
-                  onClick={showPreviousImage}
-                  aria-label="Previous image"
-                >
-                  ‹
-                </button>
-              )}
-
-              <img
-                src={selectedImage.src}
-                alt={selectedImage.alt}
-              />
-
-              {filteredImages.length > 1 && (
-                <button
-                  className="navigation-button next"
-                  type="button"
-                  onClick={showNextImage}
-                  aria-label="Next image"
-                >
-                  ›
-                </button>
-              )}
-            </div>
-
-            <div className="viewer-caption">
+            <div className="modal-details">
+              <h2>{selectedImage.title}</h2>
               <p>{selectedImage.description}</p>
+
+              <p>
+                <strong>Category:</strong>{" "}
+                {selectedImage.category}
+              </p>
+
+              <p>
+                <strong>Date:</strong> {selectedImage.date}
+              </p>
             </div>
           </div>
         </div>
