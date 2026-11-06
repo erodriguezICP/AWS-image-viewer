@@ -10,7 +10,7 @@ type ArchiveImage = {
   lastModified?: Date;
 };
 
-const ARCHIVE_PATH = "Key_Manifest/";
+const ARCHIVE_PATH = "Key_Manifest/*";
 const S3_BUCKET = {
   bucketName: "manifest-inventory",
   region: "us-east-1",
