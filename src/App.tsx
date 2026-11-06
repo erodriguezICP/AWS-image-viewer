@@ -9,13 +9,12 @@ type ArchiveImage = {
   size?: number;
   lastModified?: Date;
 };
+
 const ARCHIVE_PATH = "Key_Manifest/";
-
 const S3_BUCKET = {
-bucketName: "manifest-inventory",
-region: "us-east-1",
+  bucketName: "manifest-inventory",
+  region: "us-east-1",
 };
-
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
 
 function getFileName(path: string): string {
@@ -44,45 +43,37 @@ export default function App() {
         setLoading(true);
         setError("");
 
-const result = await list({
-  path: ARCHIVE_PATH,
-  options: {
-    listAll: true,
-    bucket: S3_BUCKET,
-  },
-});
+        const listResult = await list({
+          path: ARCHIVE_PATH,
+          options: {
+            listAll: true,
+            bucket: S3_BUCKET,
+          },
+        });
 
-const result = await list({
-  path: ARCHIVE_PATH,
-  options: {
-    listAll: true,
-    bucket: S3_BUCKET,
-  },
-});
+        const imageObjects = listResult.items.filter((item) =>
+          IMAGE_FILE.test(item.path),
+        );
 
-const imageObjects = result.items.filter((item) =>
-  IMAGE_FILE.test(item.path),
-);
+        const loadedImages = await Promise.all(
+          imageObjects.map(async (item): Promise<ArchiveImage> => {
+            const urlResult = await getUrl({
+              path: item.path,
+              options: {
+                bucket: S3_BUCKET,
+                expiresIn: 3600,
+              },
+            });
 
-const loadedImages = await Promise.all(
-  imageObjects.map(async (item): Promise<ArchiveImage> => {
-    const signedUrl = await getUrl({
-      path: item.path,
-      options: {
-        bucket: S3_BUCKET,
-        expiresIn: 3600,
-      },
-    });
-
-    return {
-      path: item.path,
-      name: getFileName(item.path),
-      url: signedUrl.url.toString(),
-      size: item.size,
-      lastModified: item.lastModified,
-    };
-  }),
-);
+            return {
+              path: item.path,
+              name: getFileName(item.path),
+              url: urlResult.url.toString(),
+              size: item.size,
+              lastModified: item.lastModified,
+            };
+          }),
+        );
 
         if (!cancelled) {
           loadedImages.sort((a, b) => a.name.localeCompare(b.name));
@@ -92,7 +83,7 @@ const loadedImages = await Promise.all(
         console.error("Failed to load archive images:", err);
         if (!cancelled) {
           setError(
-            "Unable to load archive images. Check your Amplify Storage permissions and S3 archive path.",
+            "Unable to load archive images. Check Amplify authentication, S3 permissions, CORS, bucket region, and the Key_Manifest path.",
           );
         }
       } finally {
@@ -101,7 +92,6 @@ const loadedImages = await Promise.all(
     }
 
     void loadImages();
-
     return () => {
       cancelled = true;
     };
@@ -121,7 +111,6 @@ const loadedImages = await Promise.all(
   const filteredImages = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return images;
-
     return images.filter((image) =>
       `${image.name} ${image.path}`.toLowerCase().includes(query),
     );
@@ -144,24 +133,14 @@ const loadedImages = await Promise.all(
             placeholder="Search archive images..."
             aria-label="Search archive images"
           />
-          <span>
-            {filteredImages.length} of {images.length} images
-          </span>
+          <span>{filteredImages.length} of {images.length} images</span>
         </div>
 
         {loading && <p className="status">Loading archive...</p>}
-
-        {!loading && error && (
-          <p className="status error" role="alert">
-            {error}
-          </p>
-        )}
-
+        {!loading && error && <p className="status error" role="alert">{error}</p>}
         {!loading && !error && filteredImages.length === 0 && (
           <p className="status">
-            {images.length === 0
-              ? "No archive images were found."
-              : `No images match “${search}”.`}
+            {images.length === 0 ? "No archive images were found." : `No images match “${search}”.`}
           </p>
         )}
 
@@ -208,14 +187,10 @@ const loadedImages = await Promise.all(
             >
               ×
             </button>
-
             <img src={selected.url} alt={selected.name} />
-
             <div className="lightbox-footer">
               <strong>{selected.name}</strong>
-              <a href={selected.url} target="_blank" rel="noreferrer">
-                Open original
-              </a>
+              <a href={selected.url} target="_blank" rel="noreferrer">Open original</a>
             </div>
           </div>
         </div>
