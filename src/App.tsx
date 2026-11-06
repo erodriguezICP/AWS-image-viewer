@@ -10,7 +10,7 @@ type ArchiveImage = {
   lastModified?: Date;
 };
 
-const ARCHIVE_PATH = "manifest-inventory/Archive_Image_Viewer/";
+const ARCHIVE_PATH = "Key_Manifest/";
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
 
 function getFileName(path: string): string {
