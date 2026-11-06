@@ -1,7 +1,4 @@
-import { useMemo, useState } from "react";
-import "./App.css";
-
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getUrl, list } from "aws-amplify/storage";
 import "./App.css";
 
@@ -16,15 +13,15 @@ type ArchiveImage = {
 const ARCHIVE_PATH = "Archive_Image_Viewer/";
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
 
-function fileName(path: string) {
+function getFileName(path: string): string {
   return path.split("/").pop() || path;
 }
 
-function formatBytes(bytes?: number) {
+function formatBytes(bytes?: number): string {
   if (bytes === undefined) return "";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export default function App() {
@@ -47,19 +44,21 @@ export default function App() {
           options: { listAll: true },
         });
 
-        const objects = result.items.filter((item) => IMAGE_FILE.test(item.path));
+        const imageObjects = result.items.filter((item) =>
+          IMAGE_FILE.test(item.path),
+        );
 
-        const loaded = await Promise.all(
-          objects.map(async (item): Promise<ArchiveImage> => {
-            const result = await getUrl({
+        const loadedImages = await Promise.all(
+          imageObjects.map(async (item): Promise<ArchiveImage> => {
+            const signedUrl = await getUrl({
               path: item.path,
               options: { expiresIn: 3600 },
             });
 
             return {
               path: item.path,
-              name: fileName(item.path),
-              url: result.url.toString(),
+              name: getFileName(item.path),
+              url: signedUrl.url.toString(),
               size: item.size,
               lastModified: item.lastModified,
             };
@@ -67,14 +66,14 @@ export default function App() {
         );
 
         if (!cancelled) {
-          loaded.sort((a, b) => a.name.localeCompare(b.name));
-          setImages(loaded);
+          loadedImages.sort((a, b) => a.name.localeCompare(b.name));
+          setImages(loadedImages);
         }
       } catch (err) {
-        console.error(err);
+        console.error("Failed to load archive images:", err);
         if (!cancelled) {
           setError(
-            "Unable to load archive images. Check Amplify Storage access and the S3 folder path.",
+            "Unable to load archive images. Check your Amplify Storage permissions and S3 archive path.",
           );
         }
       } finally {
@@ -83,6 +82,7 @@ export default function App() {
     }
 
     void loadImages();
+
     return () => {
       cancelled = true;
     };
@@ -90,18 +90,21 @@ export default function App() {
 
   useEffect(() => {
     if (!selected) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
+
+    const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelected(null);
     };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
   }, [selected]);
 
   const filteredImages = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return images;
+    const query = search.trim().toLowerCase();
+    if (!query) return images;
+
     return images.filter((image) =>
-      `${image.name} ${image.path}`.toLowerCase().includes(term),
+      `${image.name} ${image.path}`.toLowerCase().includes(query),
     );
   }, [images, search]);
 
@@ -122,50 +125,73 @@ export default function App() {
             placeholder="Search archive images..."
             aria-label="Search archive images"
           />
-          <span>{filteredImages.length} images</span>
+          <span>
+            {filteredImages.length} of {images.length} images
+          </span>
         </div>
 
         {loading && <p className="status">Loading archive...</p>}
-        {!loading && error && <p className="status error">{error}</p>}
-        {!loading && !error && filteredImages.length === 0 && (
-          <p className="status">No matching images found.</p>
+
+        {!loading && error && (
+          <p className="status error" role="alert">
+            {error}
+          </p>
         )}
 
-        {!loading && !error && (
-          <div className="image-grid">
+        {!loading && !error && filteredImages.length === 0 && (
+          <p className="status">
+            {images.length === 0
+              ? "No archive images were found."
+              : `No images match “${search}”.`}
+          </p>
+        )}
+
+        {!loading && !error && filteredImages.length > 0 && (
+          <section className="image-grid" aria-label="Archive images">
             {filteredImages.map((image) => (
               <button
                 key={image.path}
                 className="image-card"
                 type="button"
                 onClick={() => setSelected(image)}
+                aria-label={`Open ${image.name}`}
               >
                 <img src={image.url} alt={image.name} loading="lazy" />
                 <div className="image-info">
-                  <strong>{image.name}</strong>
+                  <strong title={image.name}>{image.name}</strong>
                   <span>
-                    {image.lastModified?.toLocaleDateString() || ""}
+                    {image.lastModified?.toLocaleDateString() || "Date unavailable"}
                     {image.size !== undefined ? ` • ${formatBytes(image.size)}` : ""}
                   </span>
                 </div>
               </button>
             ))}
-          </div>
+          </section>
         )}
       </main>
 
       {selected && (
-        <div className="lightbox" onClick={() => setSelected(null)}>
-          <div className="lightbox-content" onClick={(event) => event.stopPropagation()}>
+        <div
+          className="lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Viewing ${selected.name}`}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSelected(null);
+          }}
+        >
+          <div className="lightbox-content">
             <button
               type="button"
               className="close-button"
               onClick={() => setSelected(null)}
-              aria-label="Close viewer"
+              aria-label="Close image viewer"
             >
               ×
             </button>
+
             <img src={selected.url} alt={selected.name} />
+
             <div className="lightbox-footer">
               <strong>{selected.name}</strong>
               <a href={selected.url} target="_blank" rel="noreferrer">
@@ -178,4 +204,3 @@ export default function App() {
     </div>
   );
 }
-export default App;
