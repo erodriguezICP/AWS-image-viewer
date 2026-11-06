@@ -5,7 +5,7 @@ import "./App.css";
 type ImageItem = {
   key: string;
   title: string;
-  url: string;
+  url: string; 
   size: string;
 };
 
