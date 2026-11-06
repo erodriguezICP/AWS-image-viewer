@@ -2,348 +2,299 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuthenticator } from "@aws-amplify/ui-react";
 import "./App.css";
 
-type ImageItem = {
-  key: string;
+type ArchiveImage = {
+  id: number;
   title: string;
-  url: string; 
-  size: string;
+  description: string;
+  category: string;
+  date: string;
+  src: string;
+  alt: string;
 };
 
-const sampleImages: ImageItem[] = [
+const archiveImages: ArchiveImage[] = [
   {
-    key: "archive/photograph-001.jpg",
-    title: "Museum facade",
-    url: "https://images.unsplash.com/photo-1561214115-f2f134cc4912?auto=format&fit=crop&w=700&q=80",
-    size: "2.4 MB",
+    id: 1,
+    title: "Archive Photograph 001",
+    description: "Historic archive photograph.",
+    category: "Photography",
+    date: "1940",
+    src: "/images/archive-001.jpg",
+    alt: "Archive photograph 001",
   },
   {
-    key: "archive/photograph-002.jpg",
-    title: "Gallery installation",
-    url: "https://images.unsplash.com/photo-1549490349-8643362247b5?auto=format&fit=crop&w=700&q=80",
-    size: "1.8 MB",
+    id: 2,
+    title: "Archive Photograph 002",
+    description: "Historic city photograph.",
+    category: "City",
+    date: "1952",
+    src: "/images/archive-002.jpg",
+    alt: "Archive photograph 002",
   },
   {
-    key: "archive/photograph-003.jpg",
-    title: "Sculpture study",
-    url: "https://images.unsplash.com/photo-1547891654-e66ed7ebb968?auto=format&fit=crop&w=700&q=80",
-    size: "3.1 MB",
+    id: 3,
+    title: "Archive Photograph 003",
+    description: "Portrait from the photographic archive.",
+    category: "Portrait",
+    date: "1965",
+    src: "/images/archive-003.jpg",
+    alt: "Archive photograph 003",
   },
   {
-    key: "archive/photograph-004.jpg",
-    title: "Collection detail",
-    url: "https://images.unsplash.com/photo-1577083552431-6e5fd01aa342?auto=format&fit=crop&w=700&q=80",
-    size: "2.0 MB",
-  },
-  {
-    key: "archive/photograph-005.jpg",
-    title: "Exhibition room",
-    url: "https://images.unsplash.com/photo-1577083288073-40892c0860a4?auto=format&fit=crop&w=700&q=80",
-    size: "2.7 MB",
-  },
-  {
-    key: "archive/photograph-006.jpg",
-    title: "Archive object",
-    url: "https://images.unsplash.com/photo-1564399579883-451a5d44ec08?auto=format&fit=crop&w=700&q=80",
-    size: "1.5 MB",
+    id: 4,
+    title: "Archive Photograph 004",
+    description: "Documentary image from the collection.",
+    category: "Documentary",
+    date: "1971",
+    src: "/images/archive-004.jpg",
+    alt: "Archive photograph 004",
   },
 ];
 
-export default function App() {
-  const { signOut, user } = useAuthenticator();
+function App() {
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("All");
+  const [selectedImage, setSelectedImage] =
+    useState<ArchiveImage | null>(null);
 
-  const [query, setQuery] = useState("");
-  const [view, setView] = useState<"grid" | "list">("grid");
-  const [selected, setSelected] = useState<ImageItem | null>(null);
+  const categories = useMemo(() => {
+    return ["All", ...new Set(archiveImages.map((image) => image.category))];
+  }, []);
 
-  const [bucketUrl, setBucketUrl] = useState(
-    "https://manifest-inventory.s3.amazonaws.com"
-  );
+  const filteredImages = useMemo(() => {
+    const searchTerm = search.toLowerCase().trim();
 
-  const [showConfig, setShowConfig] = useState(false);
+    return archiveImages.filter((image) => {
+      const matchesCategory =
+        category === "All" || image.category === category;
 
-  const images = useMemo(() => {
-    return sampleImages.filter((item) =>
-      `${item.title} ${item.key}`
-        .toLowerCase()
-        .includes(query.toLowerCase())
+      const searchableText = [
+        image.title,
+        image.description,
+        image.category,
+        image.date,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      const matchesSearch = searchableText.includes(searchTerm);
+
+      return matchesCategory && matchesSearch;
+    });
+  }, [search, category]);
+
+  function closeViewer() {
+    setSelectedImage(null);
+  }
+
+  function showPreviousImage() {
+    if (!selectedImage) return;
+
+    const currentIndex = filteredImages.findIndex(
+      (image) => image.id === selectedImage.id
     );
-  }, [query]);
 
-  const selectedIndex = selected
-    ? images.findIndex((item) => item.key === selected.key)
-    : -1;
+    if (currentIndex <= 0) {
+      setSelectedImage(filteredImages[filteredImages.length - 1]);
+    } else {
+      setSelectedImage(filteredImages[currentIndex - 1]);
+    }
+  }
 
-  const move = useCallback(
-    (direction: number) => {
-      if (images.length === 0) return;
+  function showNextImage() {
+    if (!selectedImage) return;
 
-      const currentIndex = selectedIndex >= 0 ? selectedIndex : 0;
+    const currentIndex = filteredImages.findIndex(
+      (image) => image.id === selectedImage.id
+    );
 
-      const nextIndex =
-        (currentIndex + direction + images.length) % images.length;
-
-      setSelected(images[nextIndex]);
-    },
-    [images, selectedIndex]
-  );
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!selected) return;
-
-      if (event.key === "Escape") {
-        setSelected(null);
-      }
-
-      if (event.key === "ArrowLeft") {
-        move(-1);
-      }
-
-      if (event.key === "ArrowRight") {
-        move(1);
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [selected, move]);
+    if (currentIndex === filteredImages.length - 1) {
+      setSelectedImage(filteredImages[0]);
+    } else {
+      setSelectedImage(filteredImages[currentIndex + 1]);
+    }
+  }
 
   return (
-    <div className="app-shell">
+    <div className="app">
+      <header className="archive-header">
+        <div className="header-content">
+          <p className="eyebrow">DIGITAL COLLECTION</p>
 
-      <header className="topbar">
-        <div>
           <h1>Archive Image Viewer</h1>
-          <p>Vite + React + Amplify Hosting + Amazon S3</p>
-        </div>
 
-        <div className="user-actions">
-          <span>
-            {user?.signInDetails?.loginId ?? "Signed in"}
-          </span>
-
-          <button
-            type="button"
-            onClick={() => setShowConfig((value) => !value)}
-          >
-            Configure
-          </button>
-
-          <button type="button" onClick={signOut}>
-            Sign out
-          </button>
+          <p className="header-description">
+            Search and explore photographs from the digital archive.
+          </p>
         </div>
       </header>
 
-      <main className="viewer">
-
-        {showConfig && (
-          <section className="config-panel">
-            <h2>S3 connection</h2>
-
-            <p>
-              This currently displays the configured S3 location.
-              The image collection below is still using sample images.
-            </p>
-
-            <label htmlFor="bucketUrl">
-              S3 or CloudFront base URL
-            </label>
+      <main className="archive-main">
+        <section className="search-panel">
+          <div className="search-container">
+            <label htmlFor="archive-search">Search the archive</label>
 
             <input
-              id="bucketUrl"
-              type="text"
-              value={bucketUrl}
-              onChange={(event) =>
-                setBucketUrl(event.target.value)
-              }
+              id="archive-search"
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search title, description, year, or category..."
             />
-          </section>
-        )}
+          </div>
 
-        <section className="toolbar">
+          <div className="filter-container">
+            <label htmlFor="category-filter">Category</label>
 
-          <input
-            type="search"
-            value={query}
-            onChange={(event) =>
-              setQuery(event.target.value)
-            }
-            placeholder="Search filename or title"
-            aria-label="Search images"
-          />
-
-          <button
-            type="button"
-            onClick={() => setView("grid")}
-          >
-            Grid
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setView("list")}
-          >
-            List
-          </button>
-
+            <select
+              id="category-filter"
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+            >
+              {categories.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </div>
         </section>
 
-        <section className="collection-heading">
-
-          <div>
+        <section className="archive-results">
+          <div className="results-header">
             <h2>Collection</h2>
 
             <p>
-              {images.length}{" "}
-              {images.length === 1
-                ? "image"
-                : "images"}
+              {filteredImages.length}{" "}
+              {filteredImages.length === 1 ? "image" : "images"}
             </p>
           </div>
 
-          <small>{bucketUrl}</small>
+          {filteredImages.length > 0 ? (
+            <div className="image-grid">
+              {filteredImages.map((image) => (
+                <article
+                  className="image-card"
+                  key={image.id}
+                  onClick={() => setSelectedImage(image)}
+                >
+                  <div className="thumbnail-container">
+                    <img
+                      src={image.src}
+                      alt={image.alt}
+                      loading="lazy"
+                    />
+                  </div>
 
+                  <div className="image-info">
+                    <div className="image-meta">
+                      <span>{image.category}</span>
+                      <span>{image.date}</span>
+                    </div>
+
+                    <h3>{image.title}</h3>
+
+                    <p>{image.description}</p>
+
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedImage(image);
+                      }}
+                    >
+                      View image
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="no-results">
+              <h3>No images found</h3>
+              <p>Try another keyword or category.</p>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setCategory("All");
+                }}
+              >
+                Clear search
+              </button>
+            </div>
+          )}
         </section>
-
-        {images.length === 0 && (
-          <div className="empty-state">
-            No images match "{query}".
-          </div>
-        )}
-
-        {images.length > 0 && view === "grid" && (
-          <div className="image-grid">
-
-            {images.map((image) => (
-              <button
-                type="button"
-                className="image-card"
-                key={image.key}
-                onClick={() => setSelected(image)}
-              >
-
-                <img
-                  src={image.url}
-                  alt={image.title}
-                  loading="lazy"
-                />
-
-                <div>
-                  <strong>{image.title}</strong>
-                  <span>{image.key}</span>
-                  <small>{image.size}</small>
-                </div>
-
-              </button>
-            ))}
-
-          </div>
-        )}
-
-        {images.length > 0 && view === "list" && (
-          <div className="image-list">
-
-            {images.map((image) => (
-              <button
-                type="button"
-                className="image-row"
-                key={image.key}
-                onClick={() => setSelected(image)}
-              >
-
-                <img
-                  src={image.url}
-                  alt={image.title}
-                  loading="lazy"
-                />
-
-                <div>
-                  <strong>{image.title}</strong>
-                  <span>{image.key}</span>
-                </div>
-
-                <small>{image.size}</small>
-
-              </button>
-            ))}
-
-          </div>
-        )}
-
       </main>
 
-      {selected && (
+      {selectedImage && (
         <div
-          className="lightbox"
+          className="viewer-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label={`Viewing ${selected.title}`}
-          onClick={() => setSelected(null)}
+          aria-label={selectedImage.title}
+          onClick={closeViewer}
         >
-
-          <button
-            className="lightbox-close"
-            type="button"
-            onClick={() => setSelected(null)}
-          >
-            Close
-          </button>
-
-          <button
-            className="lightbox-previous"
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              move(-1);
-            }}
-          >
-            Previous
-          </button>
-
           <div
-            className="lightbox-content"
-            onClick={(event) =>
-              event.stopPropagation()
-            }
+            className="viewer"
+            onClick={(event) => event.stopPropagation()}
           >
+            <div className="viewer-toolbar">
+              <div>
+                <strong>{selectedImage.title}</strong>
+                <span>
+                  {selectedImage.category} · {selectedImage.date}
+                </span>
+              </div>
 
-            <img
-              src={selected.url}
-              alt={selected.title}
-            />
+              <button
+                className="close-button"
+                type="button"
+                onClick={closeViewer}
+                aria-label="Close image viewer"
+              >
+                ×
+              </button>
+            </div>
 
-            <h2>{selected.title}</h2>
+            <div className="viewer-image-area">
+              {filteredImages.length > 1 && (
+                <button
+                  className="navigation-button previous"
+                  type="button"
+                  onClick={showPreviousImage}
+                  aria-label="Previous image"
+                >
+                  ‹
+                </button>
+              )}
 
-            <p>{selected.key}</p>
+              <img
+                src={selectedImage.src}
+                alt={selectedImage.alt}
+              />
 
-            <a
-              href={selected.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Open original
-            </a>
+              {filteredImages.length > 1 && (
+                <button
+                  className="navigation-button next"
+                  type="button"
+                  onClick={showNextImage}
+                  aria-label="Next image"
+                >
+                  ›
+                </button>
+              )}
+            </div>
 
+            <div className="viewer-caption">
+              <p>{selectedImage.description}</p>
+            </div>
           </div>
-
-          <button
-            className="lightbox-next"
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              move(1);
-            }}
-          >
-            Next
-          </button>
-
         </div>
       )}
-
     </div>
   );
 }
+
+export default App;
