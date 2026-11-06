@@ -31,7 +31,7 @@ backend.addOutput({
         bucket_name: archiveBucket.bucketName,
         name: archiveBucket.bucketName,
         paths: {
-          "Key_Manifest/*": {
+          "Key Manifest/*": {
             authenticated: ["get", "list"],
           },
         },
@@ -49,7 +49,7 @@ const archivePolicy = new Policy(
         effect: Effect.ALLOW,
         actions: ["s3:GetObject"],
         resources: [
-          `${archiveBucket.bucketArn}/Key_Manifest/*`,
+          `${archiveBucket.bucketArn}/Key Manifest/*`,
         ],
       }),
 
@@ -60,8 +60,8 @@ const archivePolicy = new Policy(
         conditions: {
           StringLike: {
             "s3:prefix": [
-              "Key_Manifest/",
-              "Key_Manifest/*",
+              "Key Manifest/",
+              "Key Manifest/*",
             ],
           },
         },
