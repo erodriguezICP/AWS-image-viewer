@@ -9,7 +9,10 @@ type ArchiveImage = {
   size?: number;
   lastModified?: Date;
 };
-
+const S3_BUCKET = {
+  bucketName: "manifest-inventory",
+  region: "us-east-1",
+};
 const ARCHIVE_PATH = "Key_Manifest/";
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
 
@@ -39,10 +42,13 @@ export default function App() {
         setLoading(true);
         setError("");
 
-        const result = await list({
-          path: ARCHIVE_PATH,
-          options: { listAll: true },
-        });
+    const result = await list({
+  path: "Key_Manifest/",
+  options: {
+    listAll: true,
+    bucket: S3_BUCKET,
+  },
+});
 
         const imageObjects = result.items.filter((item) =>
           IMAGE_FILE.test(item.path),
@@ -50,10 +56,13 @@ export default function App() {
 
         const loadedImages = await Promise.all(
           imageObjects.map(async (item): Promise<ArchiveImage> => {
-            const signedUrl = await getUrl({
-              path: item.path,
-              options: { expiresIn: 3600 },
-            });
+        const signedUrl = await getUrl({ 
+          path: item.path,
+          options: {
+            bucket: S3_BUCKET,
+            expiresIn: 3600,
+  },
+});
 
             return {
               path: item.path,
