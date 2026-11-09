@@ -24,11 +24,11 @@ const UNCATEGORIZED = "Uncategorized";
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
 const BROWSER_IMAGE = /\.(avif|bmp|gif|jpe?g|png|webp)$/i;
 
-function relativeParts(path: string): string[] {
-  const relative = path.startsWith(ARCHIVE_PATH)
+function getRelativeParts(path: string): string[] {
+  const relativePath = path.startsWith(ARCHIVE_PATH)
     ? path.slice(ARCHIVE_PATH.length)
     : path;
-  return relative.split("/").filter(Boolean);
+  return relativePath.split("/").filter(Boolean);
 }
 
 function toArchiveImage(item: {
@@ -36,17 +36,14 @@ function toArchiveImage(item: {
   size?: number;
   lastModified?: Date;
 }): ArchiveImage {
-  const parts = relativeParts(item.path);
-
+  const parts = getRelativeParts(item.path);
+  const folderParts = parts.slice(0, -1);
   return {
     path: item.path,
-    name: parts[parts.length - 1] || item.path,
-    collection: parts.length > 1 ? parts[0] : UNCATEGORIZED,
-    category: parts.length > 2 ? parts[1] : UNCATEGORIZED,
-    folder:
-      parts.length > 1
-        ? parts.slice(0, -1).join(" / ")
-        : UNCATEGORIZED,
+    name: parts.length > 0 ? parts[parts.length - 1] : item.path,
+    collection: folderParts.length >= 1 ? folderParts[0] : UNCATEGORIZED,
+    category: folderParts.length >= 2 ? folderParts[1] : UNCATEGORIZED,
+    folder: folderParts.length > 0 ? folderParts.join(" / ") : UNCATEGORIZED,
     size: item.size,
     lastModified: item.lastModified,
   };
@@ -59,6 +56,10 @@ function formatBytes(bytes?: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function canPreview(path: string): boolean {
+  return BROWSER_IMAGE.test(path);
+}
+
 export default function App() {
   const [images, setImages] = useState<ArchiveImage[]>([]);
   const [pageImages, setPageImages] = useState<DisplayImage[]>([]);
@@ -69,13 +70,13 @@ export default function App() {
   const [selected, setSelected] = useState<DisplayImage | null>(null);
   const [loadingArchive, setLoadingArchive] = useState(true);
   const [loadingPage, setLoadingPage] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
   const urlCache = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     let active = true;
-
     async function loadArchive(): Promise<void> {
       try {
         setLoadingArchive(true);
@@ -87,102 +88,76 @@ export default function App() {
         const metadata = result.items
           .filter((item) => IMAGE_FILE.test(item.path))
           .map(toArchiveImage)
-          .sort((a, b) =>
-            a.name.localeCompare(b.name, undefined, {
-              numeric: true,
-              sensitivity: "base",
-            }),
-          );
+          .sort((a, b) => {
+            const collectionOrder = a.collection.localeCompare(b.collection, undefined, { numeric: true, sensitivity: "base" });
+            if (collectionOrder !== 0) return collectionOrder;
+            const categoryOrder = a.category.localeCompare(b.category, undefined, { numeric: true, sensitivity: "base" });
+            if (categoryOrder !== 0) return categoryOrder;
+            return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+          });
         if (active) setImages(metadata);
       } catch (caughtError) {
-        console.error("Unable to list archive images:", caughtError);
-        if (active) {
-          setError(
-            `Unable to load images from "${ARCHIVE_PATH}". Check the S3 prefix and Amplify Storage permissions.`,
-          );
-        }
+        console.error("Unable to load archive:", caughtError);
+        if (active) setError(`Unable to load images from "${ARCHIVE_PATH}". Check the S3 prefix and Amplify Storage permissions.`);
       } finally {
         if (active) setLoadingArchive(false);
       }
     }
-
     void loadArchive();
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, []);
 
-  const collections = useMemo(
-    () =>
-      Array.from(new Set(images.map((image) => image.collection))).sort((a, b) =>
-        a.localeCompare(b),
-      ),
-    [images],
-  );
+  const collections = useMemo(() =>
+    Array.from(new Set(images.map((image) => image.collection))).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+    ), [images]);
 
   const categories = useMemo(() => {
-    const scoped =
-      collection === ALL_COLLECTIONS
-        ? images
-        : images.filter((image) => image.collection === collection);
-    return Array.from(new Set(scoped.map((image) => image.category))).sort(
-      (a, b) => a.localeCompare(b),
+    const scopedImages = collection === ALL_COLLECTIONS
+      ? images
+      : images.filter((image) => image.collection === collection);
+    return Array.from(new Set(scopedImages.map((image) => image.category))).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
     );
   }, [images, collection]);
 
   const filteredImages = useMemo(() => {
     const query = search.trim().toLowerCase();
     return images.filter((image) => {
-      if (collection !== ALL_COLLECTIONS && image.collection !== collection) {
-        return false;
-      }
-      if (category !== ALL_CATEGORIES && image.category !== category) {
-        return false;
-      }
+      if (collection !== ALL_COLLECTIONS && image.collection !== collection) return false;
+      if (category !== ALL_CATEGORIES && image.category !== category) return false;
       if (!query) return true;
       return [image.name, image.collection, image.category, image.folder, image.path]
-        .join(" ")
-        .toLowerCase()
-        .includes(query);
+        .join(" ").toLowerCase().includes(query);
     });
   }, [images, search, collection, category]);
 
   const totalPages = Math.max(1, Math.ceil(filteredImages.length / PAGE_SIZE));
+
+  useEffect(() => { setPage(1); setSelected(null); }, [search, collection, category]);
+  useEffect(() => { setCategory(ALL_CATEGORIES); }, [collection]);
+  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
+
   const currentMetadata = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
     return filteredImages.slice(start, start + PAGE_SIZE);
   }, [filteredImages, page]);
 
   useEffect(() => {
-    setPage(1);
-    setSelected(null);
-  }, [search, collection, category]);
-
-  useEffect(() => {
-    setCategory(ALL_CATEGORIES);
-  }, [collection]);
-
-  useEffect(() => {
-    if (page > totalPages) setPage(totalPages);
-  }, [page, totalPages]);
-
-  useEffect(() => {
     let active = true;
-
     async function loadPage(): Promise<void> {
       if (currentMetadata.length === 0) {
         setPageImages([]);
         setWarning("");
         return;
       }
-
       try {
         setLoadingPage(true);
         setWarning("");
         const results = await Promise.allSettled(
           currentMetadata.map(async (image): Promise<DisplayImage> => {
-            const cached = urlCache.current.get(image.path);
-            if (cached) return { ...image, url: cached };
+            const cachedUrl = urlCache.current.get(image.path);
+            if (cachedUrl) return { ...image, url: cachedUrl };
             const result = await getUrl({
               path: image.path,
               options: { bucket: S3_BUCKET, expiresIn: URL_EXPIRATION_SECONDS },
@@ -200,9 +175,7 @@ export default function App() {
         }
         if (active) {
           setPageImages(loaded);
-          if (failures) {
-            setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
-          }
+          if (failures > 0) setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
         }
       } catch (caughtError) {
         console.error("Unable to load page:", caughtError);
@@ -211,11 +184,8 @@ export default function App() {
         if (active) setLoadingPage(false);
       }
     }
-
     void loadPage();
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [currentMetadata]);
 
   function changePage(nextPage: number): void {
@@ -232,7 +202,31 @@ export default function App() {
     setSelected(null);
   }
 
-  const firstResult = filteredImages.length ? (page - 1) * PAGE_SIZE + 1 : 0;
+  async function downloadImage(image: DisplayImage): Promise<void> {
+    try {
+      setDownloading(true);
+      setWarning("");
+      const response = await fetch(image.url);
+      if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = image.name || "archive-image";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (caughtError) {
+      console.error("Unable to download image:", caughtError);
+      window.open(image.url, "_blank", "noopener,noreferrer");
+      setWarning("Direct download was blocked, so the original image was opened instead.");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  const firstResult = filteredImages.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const lastResult = Math.min(page * PAGE_SIZE, filteredImages.length);
 
   return (
@@ -240,244 +234,82 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">ICP</div>
-          <div>
-            <strong>Image Archive</strong>
-            <span>Digital Collection</span>
-          </div>
+          <div><strong>Image Archive</strong><span>Digital Collection</span></div>
         </div>
-
         <div className="static-filters">
           <label htmlFor="archive-search">Search archive</label>
-          <input
-            id="archive-search"
-            type="search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Filename, folder, collection..."
-          />
-
+          <input id="archive-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filename, folder, collection..." autoComplete="off" />
           <label htmlFor="collection-filter">Collection</label>
-          <select
-            id="collection-filter"
-            value={collection}
-            onChange={(event) => setCollection(event.target.value)}
-          >
+          <select id="collection-filter" value={collection} onChange={(event) => setCollection(event.target.value)}>
             <option value={ALL_COLLECTIONS}>All collections</option>
-            {collections.map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
+            {collections.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
-
           <label htmlFor="category-filter">Category</label>
-          <select
-            id="category-filter"
-            value={category}
-            onChange={(event) => setCategory(event.target.value)}
-          >
+          <select id="category-filter" value={category} onChange={(event) => setCategory(event.target.value)}>
             <option value={ALL_CATEGORIES}>All categories</option>
-            {categories.map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
+            {categories.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
-
-          <button type="button" className="clear-button" onClick={clearFilters}>
-            Clear filters
-          </button>
-
-          <div className="result-count">
-            <span>Results</span>
-            <strong>{filteredImages.length.toLocaleString()}</strong>
-          </div>
+          <button type="button" className="clear-button" onClick={clearFilters}>Clear filters</button>
+          <div className="result-count"><span>Results</span><strong>{filteredImages.length.toLocaleString()}</strong></div>
         </div>
       </aside>
 
       <main className="main-content">
-        <header className="top-header">
-          <div>
-            <h1>Image Archive</h1>
-            <p>People. Photographs. A brighter tomorrow.</p>
-          </div>
-        </header>
-
+        <header className="top-header"><div><h1>Image Archive</h1><p>People. Photographs. A brighter tomorrow.</p></div></header>
         {loadingArchive ? (
-          <div className="status">
-            <div className="spinner" aria-hidden="true" />
-            <strong>Loading archive...</strong>
-          </div>
+          <div className="status"><div className="spinner" aria-hidden="true" /><strong>Loading archive...</strong></div>
         ) : error ? (
-          <div className="status error">
-            <strong>Archive unavailable</strong>
-            <p>{error}</p>
-          </div>
+          <div className="status error"><strong>Archive unavailable</strong><p>{error}</p></div>
         ) : (
           <div className={selected ? "content-layout details-open" : "content-layout"}>
             <section className="results-area">
               <div className="results-toolbar">
-                <div className="results-summary">
-                  <strong>{filteredImages.length.toLocaleString()} results</strong>
-                  {filteredImages.length > 0 && (
-                    <span>
-                      Showing {firstResult} to {lastResult}
-                    </span>
-                  )}
-                </div>
-
+                <div className="results-summary"><strong>{filteredImages.length.toLocaleString()} results</strong>{filteredImages.length > 0 && <span>Showing {firstResult} to {lastResult}</span>}</div>
                 <nav className="pagination" aria-label="Archive pagination">
-                  <button
-                    type="button"
-                    onClick={() => changePage(page - 1)}
-                    disabled={page === 1 || loadingPage}
-                  >
-                    Previous
-                  </button>
-                  <span>
-                    Page <strong>{page}</strong> of <strong>{totalPages}</strong>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => changePage(page + 1)}
-                    disabled={page === totalPages || loadingPage}
-                  >
-                    Next
-                  </button>
+                  <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1 || loadingPage}>Previous</button>
+                  <span>Page <strong>{page}</strong> of <strong>{totalPages}</strong></span>
+                  <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages || loadingPage}>Next</button>
                 </nav>
               </div>
-
               {warning && <div className="warning">{warning}</div>}
-
               {filteredImages.length === 0 ? (
-                <div className="status">
-                  <strong>No images found</strong>
-                  <p>Change the search, collection, or category.</p>
-                </div>
+                <div className="status"><strong>No images found</strong><p>Change the search, collection, or category.</p></div>
               ) : loadingPage ? (
-                <div className="status">
-                  <div className="spinner" aria-hidden="true" />
-                  <strong>Loading page {page}...</strong>
-                </div>
+                <div className="status"><div className="spinner" aria-hidden="true" /><strong>Loading page {page}...</strong></div>
               ) : (
                 <div className="image-grid">
                   {pageImages.map((image) => (
-                    <button
-                      key={image.path}
-                      type="button"
-                      className={
-                        selected?.path === image.path
-                          ? "image-card selected"
-                          : "image-card"
-                      }
-                      onClick={() => setSelected(image)}
-                    >
-                      <div className="thumbnail">
-                        {BROWSER_IMAGE.test(image.path) ? (
-                          <img
-                            src={image.url}
-                            alt={image.name}
-                            loading="lazy"
-                            decoding="async"
-                          />
-                        ) : (
-                          <div className="no-preview">TIFF</div>
-                        )}
-                      </div>
-                      <div className="card-details">
-                        <strong title={image.name}>{image.name}</strong>
-                        <span>{image.collection}</span>
-                        <span>{image.category}</span>
-                        <small>
-                          {image.lastModified
-                            ? image.lastModified.toLocaleDateString()
-                            : "Date unavailable"}
-                        </small>
-                      </div>
+                    <button key={image.path} type="button" className={selected?.path === image.path ? "image-card selected" : "image-card"} onClick={() => setSelected(image)}>
+                      <div className="thumbnail">{canPreview(image.path) ? <img src={image.url} alt={image.name} loading="lazy" decoding="async" /> : <div className="no-preview">TIFF</div>}</div>
+                      <div className="card-details"><strong title={image.name}>{image.name}</strong><span>{image.collection}</span><span>{image.category}</span><small>{image.lastModified ? image.lastModified.toLocaleDateString() : "Date unavailable"}</small></div>
                     </button>
                   ))}
                 </div>
               )}
-
               {filteredImages.length > 0 && (
                 <nav className="bottom-pagination" aria-label="Bottom pagination">
-                  <button
-                    type="button"
-                    onClick={() => changePage(page - 1)}
-                    disabled={page === 1 || loadingPage}
-                  >
-                    Previous
-                  </button>
-                  <span>
-                    Page {page} of {totalPages}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => changePage(page + 1)}
-                    disabled={page === totalPages || loadingPage}
-                  >
-                    Next
-                  </button>
+                  <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1 || loadingPage}>Previous</button>
+                  <span>Page {page} of {totalPages}</span>
+                  <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages || loadingPage}>Next</button>
                 </nav>
               )}
             </section>
 
             {selected && (
               <aside className="details-panel">
-                <div className="details-header">
-                  <strong title={selected.name}>{selected.name}</strong>
-                  <button
-                    type="button"
-                    onClick={() => setSelected(null)}
-                    aria-label="Close details panel"
-                  >
-                    ×
-                  </button>
-                </div>
-
-                <div className="details-preview">
-                  {BROWSER_IMAGE.test(selected.path) ? (
-                    <img src={selected.url} alt={selected.name} />
-                  ) : (
-                    <div className="no-preview">TIFF preview unavailable</div>
-                  )}
-                </div>
-
+                <div className="details-header"><strong title={selected.name}>{selected.name}</strong><button type="button" onClick={() => setSelected(null)} aria-label="Close details panel">×</button></div>
+                <div className="details-preview">{canPreview(selected.path) ? <img src={selected.url} alt={selected.name} /> : <div className="no-preview">TIFF preview unavailable</div>}</div>
                 <div className="details-actions">
-                  <a href={selected.url} target="_blank" rel="noreferrer">
-                    Open original
-                  </a>
+                  <button type="button" className="download-button" onClick={() => void downloadImage(selected)} disabled={downloading}>{downloading ? "Downloading..." : "Download"}</button>
+                  <a href={selected.url} target="_blank" rel="noreferrer">Open original</a>
                 </div>
-
                 <dl className="metadata">
-                  <div>
-                    <dt>Filename</dt>
-                    <dd>{selected.name}</dd>
-                  </div>
-                  <div>
-                    <dt>Collection</dt>
-                    <dd>{selected.collection}</dd>
-                  </div>
-                  <div>
-                    <dt>Category</dt>
-                    <dd>{selected.category}</dd>
-                  </div>
-                  <div>
-                    <dt>Folder</dt>
-                    <dd>{selected.folder}</dd>
-                  </div>
-                  <div>
-                    <dt>File size</dt>
-                    <dd>{formatBytes(selected.size)}</dd>
-                  </div>
-                  <div>
-                    <dt>Modified</dt>
-                    <dd>
-                      {selected.lastModified
-                        ? selected.lastModified.toLocaleDateString()
-                        : "Unavailable"}
-                    </dd>
-                  </div>
+                  <div><dt>Filename</dt><dd>{selected.name}</dd></div>
+                  <div><dt>Collection</dt><dd>{selected.collection}</dd></div>
+                  <div><dt>Category</dt><dd>{selected.category}</dd></div>
+                  <div><dt>Folder</dt><dd>{selected.folder}</dd></div>
+                  <div><dt>File size</dt><dd>{formatBytes(selected.size)}</dd></div>
+                  <div><dt>Modified</dt><dd>{selected.lastModified ? selected.lastModified.toLocaleDateString() : "Unavailable"}</dd></div>
                 </dl>
               </aside>
             )}
