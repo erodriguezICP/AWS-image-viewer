@@ -22,7 +22,7 @@ const S3_BUCKET = {
 };
 
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
-const BROWSER_IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|webp)$/i;
+const BROWSER_PREVIEW_FILE = /\.(avif|bmp|gif|jpe?g|png|webp)$/i;
 
 const PAGE_SIZE = 24;
 const URL_EXPIRATION_SECONDS = 3600;
@@ -34,12 +34,10 @@ function getFileName(path: string): string {
   return path.split("/").pop() || path;
 }
 
-function getFolder(path: string): string {
-  let relativePath = path;
-
-  if (relativePath.startsWith(ARCHIVE_PATH)) {
-    relativePath = relativePath.slice(ARCHIVE_PATH.length);
-  }
+function getFolderName(path: string): string {
+  const relativePath = path.startsWith(ARCHIVE_PATH)
+    ? path.slice(ARCHIVE_PATH.length)
+    : path;
 
   const parts = relativePath.split("/").filter(Boolean);
 
@@ -69,7 +67,7 @@ function formatBytes(bytes?: number): string {
 }
 
 function canPreviewInBrowser(path: string): boolean {
-  return BROWSER_IMAGE_FILE.test(path);
+  return BROWSER_PREVIEW_FILE.test(path);
 }
 
 export default function App() {
@@ -91,16 +89,10 @@ export default function App() {
 
   const urlCache = useRef<Map<string, string>>(new Map());
 
-  /*
-   * Load archive metadata.
-   *
-   * This lists S3 objects without creating a signed URL
-   * for every image in the archive.
-   */
   useEffect(() => {
     let cancelled = false;
 
-    async function loadArchive() {
+    async function loadArchive(): Promise<void> {
       try {
         setLoadingArchive(true);
         setArchiveError("");
@@ -117,9 +109,4 @@ export default function App() {
           .filter((item) => IMAGE_FILE.test(item.path))
           .map((item) => ({
             path: item.path,
-            name: getFileName(item.path),
-            folder: getFolder(item.path),
-            size: item.size,
-            lastModified: item.lastModified,
-          }))
-          .sort((a, b
+            name: 
