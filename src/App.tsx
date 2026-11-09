@@ -12,16 +12,10 @@ type ArchiveImage = {
   lastModified?: Date;
 };
 
-type DisplayImage = ArchiveImage & {
-  url: string;
-};
+type DisplayImage = ArchiveImage & { url: string };
 
 const ARCHIVE_PATH = "Key Manifest/";
-const S3_BUCKET = {
-  bucketName: "manifest-inventory",
-  region: "us-east-1",
-};
-
+const S3_BUCKET = { bucketName: "manifest-inventory", region: "us-east-1" };
 const PAGE_SIZE = 24;
 const URL_EXPIRATION_SECONDS = 3600;
 const ALL_COLLECTIONS = "All collections";
@@ -30,40 +24,28 @@ const UNCATEGORIZED = "Uncategorized";
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
 const BROWSER_IMAGE = /\.(avif|bmp|gif|jpe?g|png|webp)$/i;
 
-function getFileName(path: string): string {
-  return path.split("/").pop() || path;
-}
-
-function getRelativeParts(path: string): string[] {
+function relativeParts(path: string): string[] {
   const relative = path.startsWith(ARCHIVE_PATH)
     ? path.slice(ARCHIVE_PATH.length)
     : path;
-
   return relative.split("/").filter(Boolean);
 }
 
-function getCollection(path: string): string {
-  const parts = getRelativeParts(path);
-  return parts.length > 1 ? parts[0] : UNCATEGORIZED;
-}
-
-function getCategory(path: string): string {
-  const parts = getRelativeParts(path);
-  return parts.length > 2 ? parts[1] : UNCATEGORIZED;
-}
-
-function getFolder(path: string): string {
-  const parts = getRelativeParts(path);
-
-  if (parts.length <= 1) {
-    return UNCATEGORIZED;
-  }
-
-  return parts.slice(0, -1).join(" / ");
-}
-
-function canPreview(path: string): boolean {
-  return BROWSER_IMAGE.test(path);
+function toArchiveImage(item: {
+  path: string;
+  size?: number;
+  lastModified?: Date;
+}): ArchiveImage {
+  const parts = relativeParts(item.path);
+  return {
+    path: item.path,
+    name: parts.at(-1) || item.path,
+    collection: parts.length > 1 ? parts[0] : UNCATEGORIZED,
+    category: parts.length > 2 ? parts[1] : UNCATEGORIZED,
+    folder: parts.length > 1 ? parts.slice(0, -1).join(" / ") : UNCATEGORIZED,
+    size: item.size,
+    lastModified: item.lastModified,
+  };
 }
 
 function formatBytes(bytes?: number): string {
@@ -94,99 +76,67 @@ export default function App() {
       try {
         setLoadingArchive(true);
         setError("");
-
         const result = await list({
           path: ARCHIVE_PATH,
-          options: {
-            listAll: true,
-            bucket: S3_BUCKET,
-          },
+          options: { listAll: true, bucket: S3_BUCKET },
         });
-
-        const metadata: ArchiveImage[] = result.items
+        const metadata = result.items
           .filter((item) => IMAGE_FILE.test(item.path))
-          .map((item) => ({
-            path: item.path,
-            name: getFileName(item.path),
-            collection: getCollection(item.path),
-            category: getCategory(item.path),
-            folder: getFolder(item.path),
-            size: item.size,
-            lastModified: item.lastModified,
-          }))
+          .map(toArchiveImage)
           .sort((a, b) =>
             a.name.localeCompare(b.name, undefined, {
               numeric: true,
               sensitivity: "base",
             }),
           );
-
-        if (active) {
-          setImages(metadata);
-        }
+        if (active) setImages(metadata);
       } catch (caughtError) {
         console.error("Unable to list archive images:", caughtError);
-
         if (active) {
           setError(
             `Unable to load images from "${ARCHIVE_PATH}". Check the S3 prefix and Amplify Storage permissions.`,
           );
         }
       } finally {
-        if (active) {
-          setLoadingArchive(false);
-        }
+        if (active) setLoadingArchive(false);
       }
     }
 
     void loadArchive();
-
     return () => {
       active = false;
     };
   }, []);
 
-  const collections = useMemo(() => {
-    return Array.from(new Set(images.map((image) => image.collection))).sort(
-      (a, b) => a.localeCompare(b),
-    );
-  }, [images]);
+  const collections = useMemo(
+    () =>
+      Array.from(new Set(images.map((image) => image.collection))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [images],
+  );
 
   const categories = useMemo(() => {
-    const scopedImages =
+    const scoped =
       collection === ALL_COLLECTIONS
         ? images
         : images.filter((image) => image.collection === collection);
-
-    return Array.from(
-      new Set(scopedImages.map((image) => image.category)),
-    ).sort((a, b) => a.localeCompare(b));
+    return Array.from(new Set(scoped.map((image) => image.category))).sort(
+      (a, b) => a.localeCompare(b),
+    );
   }, [images, collection]);
 
   const filteredImages = useMemo(() => {
     const query = search.trim().toLowerCase();
-
     return images.filter((image) => {
-      const collectionMatches =
-        collection === ALL_COLLECTIONS || image.collection === collection;
-      const categoryMatches =
-        category === ALL_CATEGORIES || image.category === category;
-
-      if (!collectionMatches || !categoryMatches) {
+      if (collection !== ALL_COLLECTIONS && image.collection !== collection) {
         return false;
       }
-
-      if (!query) {
-        return true;
+      if (category !== ALL_CATEGORIES && image.category !== category) {
+        return false;
       }
-
-      return [
-        image.name,
-        image.collection,
-        image.category,
-        image.folder,
-        image.path,
-      ]
+      if (!query) return true;
+      return [image.name, image.collection, image.category, image.folder, image.path]
         .join(" ")
         .toLowerCase()
         .includes(query);
@@ -194,6 +144,10 @@ export default function App() {
   }, [images, search, collection, category]);
 
   const totalPages = Math.max(1, Math.ceil(filteredImages.length / PAGE_SIZE));
+  const currentMetadata = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredImages.slice(start, start + PAGE_SIZE);
+  }, [filteredImages, page]);
 
   useEffect(() => {
     setPage(1);
@@ -205,90 +159,56 @@ export default function App() {
   }, [collection]);
 
   useEffect(() => {
-    if (page > totalPages) {
-      setPage(totalPages);
-    }
+    if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
-
-  const currentMetadata = useMemo(() => {
-    const startIndex = (page - 1) * PAGE_SIZE;
-    return filteredImages.slice(startIndex, startIndex + PAGE_SIZE);
-  }, [filteredImages, page]);
 
   useEffect(() => {
     let active = true;
 
-    async function loadVisibleImages(): Promise<void> {
+    async function loadPage(): Promise<void> {
       if (currentMetadata.length === 0) {
         setPageImages([]);
         setWarning("");
-        setLoadingPage(false);
         return;
       }
 
       try {
         setLoadingPage(true);
         setWarning("");
-
         const results = await Promise.allSettled(
           currentMetadata.map(async (image): Promise<DisplayImage> => {
-            const cachedUrl = urlCache.current.get(image.path);
-
-            if (cachedUrl) {
-              return { ...image, url: cachedUrl };
-            }
-
+            const cached = urlCache.current.get(image.path);
+            if (cached) return { ...image, url: cached };
             const result = await getUrl({
               path: image.path,
-              options: {
-                bucket: S3_BUCKET,
-                expiresIn: URL_EXPIRATION_SECONDS,
-              },
+              options: { bucket: S3_BUCKET, expiresIn: URL_EXPIRATION_SECONDS },
             });
-
             const url = result.url.toString();
             urlCache.current.set(image.path, url);
             return { ...image, url };
           }),
         );
-
         const loaded: DisplayImage[] = [];
-        let failed = 0;
-
+        let failures = 0;
         for (const result of results) {
-          if (result.status === "fulfilled") {
-            loaded.push(result.value);
-          } else {
-            failed += 1;
-            console.error("Unable to generate image URL:", result.reason);
-          }
+          if (result.status === "fulfilled") loaded.push(result.value);
+          else failures += 1;
         }
-
         if (active) {
           setPageImages(loaded);
-
-          if (failed > 0) {
-            setWarning(
-              `${failed} image${failed === 1 ? "" : "s"} could not be loaded.`,
-            );
+          if (failures) {
+            setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
           }
         }
       } catch (caughtError) {
-        console.error("Unable to load the current page:", caughtError);
-
-        if (active) {
-          setPageImages([]);
-          setWarning("Unable to load the current page.");
-        }
+        console.error("Unable to load page:", caughtError);
+        if (active) setWarning("Unable to load the current page.");
       } finally {
-        if (active) {
-          setLoadingPage(false);
-        }
+        if (active) setLoadingPage(false);
       }
     }
 
-    void loadVisibleImages();
-
+    void loadPage();
     return () => {
       active = false;
     };
@@ -308,8 +228,7 @@ export default function App() {
     setSelected(null);
   }
 
-  const firstResult =
-    filteredImages.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const firstResult = filteredImages.length ? (page - 1) * PAGE_SIZE + 1 : 0;
   const lastResult = Math.min(page * PAGE_SIZE, filteredImages.length);
 
   return (
@@ -450,7 +369,7 @@ export default function App() {
                       onClick={() => setSelected(image)}
                     >
                       <div className="thumbnail">
-                        {canPreview(image.path) ? (
+                        {BROWSER_IMAGE.test(image.path) ? (
                           <img
                             src={image.url}
                             alt={image.name}
@@ -461,7 +380,6 @@ export default function App() {
                           <div className="no-preview">TIFF</div>
                         )}
                       </div>
-
                       <div className="card-details">
                         <strong title={image.name}>{image.name}</strong>
                         <span>{image.collection}</span>
@@ -514,7 +432,7 @@ export default function App() {
                 </div>
 
                 <div className="details-preview">
-                  {canPreview(selected.path) ? (
+                  {BROWSER_IMAGE.test(selected.path) ? (
                     <img src={selected.url} alt={selected.name} />
                   ) : (
                     <div className="no-preview">TIFF preview unavailable</div>
