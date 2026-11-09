@@ -1,5 +1,5 @@
 /* =========================================================
-   RESET
+   BASE
 ========================================================= */
 
 *,
@@ -20,7 +20,6 @@
 
   color: #182230;
   background: #3f3f3f;
-
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -48,44 +47,35 @@ select {
 
 
 /* =========================================================
-   FIXED APPLICATION SIZE
-
-   Change APP_WIDTH if you want the entire viewer wider
-   or narrower.
-
-   The interface will NOT shrink below 1440px.
+   FIXED APPLICATION FRAME
 ========================================================= */
 
 .archive-shell {
   display: grid;
-
-  grid-template-columns:
-    230px 1210px;
+  grid-template-columns: 230px 1210px;
 
   width: 1440px;
   min-width: 1440px;
   max-width: 1440px;
 
   min-height: 100vh;
-
   margin: 0 auto;
 
   background: #f7f8fa;
 
   box-shadow:
     0 0 30px
-    rgb(0 0 0 / 20%);
+    rgb(0 0 0 / 22%);
 }
 
 
 /* =========================================================
-   STATIC LEFT SIDEBAR
+   LEFT SIDEBAR
 ========================================================= */
 
 .sidebar {
   position: sticky;
   top: 0;
-
   align-self: start;
 
   width: 230px;
@@ -128,6 +118,8 @@ select {
 .brand-mark {
   flex-shrink: 0;
 
+  color: #111827;
+
   font-size: 1.8rem;
   font-weight: 900;
 
@@ -136,6 +128,8 @@ select {
 
 .brand strong {
   display: block;
+
+  color: #172130;
 
   font-size: 0.86rem;
 }
@@ -149,58 +143,14 @@ select {
 
   font-size: 0.61rem;
 
+  letter-spacing: 0.03em;
+
   text-transform: uppercase;
 }
 
 
 /* =========================================================
-   LEFT NAVIGATION
-========================================================= */
-
-.side-nav {
-  display: flex;
-  flex-direction: column;
-
-  width: 100%;
-
-  padding: 12px 0;
-}
-
-.side-nav-item {
-  width: 100%;
-  height: 44px;
-
-  padding: 0 18px;
-
-  border: 0;
-
-  background: transparent;
-  color: #cad3de;
-
-  text-align: left;
-
-  font-size: 0.78rem;
-  font-weight: 650;
-
-  cursor: pointer;
-}
-
-.side-nav-item:hover {
-  background: #21364c;
-  color: #ffffff;
-}
-
-.side-nav-item.active {
-  background: #21364c;
-  color: #ffffff;
-
-  box-shadow:
-    inset 3px 0 #52a1ff;
-}
-
-
-/* =========================================================
-   STATIC SEARCH + FILTER AREA
+   STATIC FILTER AREA
 ========================================================= */
 
 .static-filters {
@@ -211,9 +161,9 @@ select {
 
   width: 100%;
 
-  padding: 18px 16px 24px;
+  padding: 24px 16px;
 
-  border-top: 1px solid #2e3d4e;
+  background: #192432;
 }
 
 .static-filters label {
@@ -224,20 +174,21 @@ select {
   font-size: 0.67rem;
   font-weight: 700;
 
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
 
   text-transform: uppercase;
 }
 
-.static-filters input,
-.static-filters select {
-  width: 198px;
-  min-width: 198px;
-  max-width: 198px;
 
+/* =========================================================
+   SEARCH
+========================================================= */
+
+.static-filters input {
+  width: 198px;
   height: 40px;
 
-  padding: 0 10px;
+  padding: 0 11px;
 
   border: 1px solid #405469;
   border-radius: 5px;
@@ -254,7 +205,46 @@ select {
   color: #8fa0b2;
 }
 
-.static-filters input:focus,
+.static-filters input:hover {
+  border-color: #587087;
+}
+
+.static-filters input:focus {
+  border-color: #59a4fa;
+
+  box-shadow:
+    0 0 0 2px
+    rgb(89 164 250 / 18%);
+}
+
+
+/* =========================================================
+   COLLECTION + CATEGORY FILTERS
+========================================================= */
+
+.static-filters select {
+  width: 198px;
+  height: 40px;
+
+  padding: 0 10px;
+
+  border: 1px solid #405469;
+  border-radius: 5px;
+
+  outline: none;
+
+  background: #243446;
+  color: #ffffff;
+
+  font-size: 0.76rem;
+
+  cursor: pointer;
+}
+
+.static-filters select:hover {
+  border-color: #587087;
+}
+
 .static-filters select:focus {
   border-color: #59a4fa;
 
@@ -265,7 +255,7 @@ select {
 
 
 /* =========================================================
-   CLEAR FILTER BUTTON
+   CLEAR FILTERS
 ========================================================= */
 
 .clear-button {
@@ -284,15 +274,20 @@ select {
   font-weight: 700;
 
   cursor: pointer;
+
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
 }
 
 .clear-button:hover {
+  border-color: #58718a;
   background: #34506b;
 }
 
 
 /* =========================================================
-   RESULT NUMBER
+   RESULT COUNT
 ========================================================= */
 
 .result-count {
@@ -303,7 +298,6 @@ select {
   width: 198px;
 
   margin-top: 10px;
-
   padding-top: 16px;
 
   border-top: 1px solid #304154;
@@ -324,9 +318,7 @@ select {
 
 
 /* =========================================================
-   MAIN CONTENT
-
-   Fixed 1210px width.
+   MAIN AREA
 ========================================================= */
 
 .main-content {
@@ -339,13 +331,12 @@ select {
 
 
 /* =========================================================
-   FIXED HEADER
+   HEADER
 ========================================================= */
 
 .top-header {
   position: sticky;
   z-index: 40;
-
   top: 0;
 
   display: flex;
@@ -364,7 +355,10 @@ select {
 .top-header h1 {
   margin: 0;
 
+  color: #111827;
+
   font-size: 1rem;
+  font-weight: 750;
 }
 
 .top-header p {
@@ -382,12 +376,6 @@ select {
 
 /* =========================================================
    CONTENT LAYOUT
-
-   Without details:
-   1210px results
-
-   With details:
-   870px results + 340px details
 ========================================================= */
 
 .content-layout {
@@ -409,7 +397,7 @@ select {
 
 
 /* =========================================================
-   RESULTS AREA
+   RESULTS
 ========================================================= */
 
 .results-area {
@@ -422,7 +410,7 @@ select {
 
 
 /* =========================================================
-   STATIC RESULTS / PAGINATION BAR
+   RESULTS TOOLBAR
 ========================================================= */
 
 .results-toolbar {
@@ -488,8 +476,6 @@ select {
 .bottom-pagination button {
   width: 82px;
   min-width: 82px;
-  max-width: 82px;
-
   height: 36px;
 
   padding: 0;
@@ -504,6 +490,11 @@ select {
   font-weight: 700;
 
   cursor: pointer;
+
+  transition:
+    border-color 140ms ease,
+    color 140ms ease,
+    background 140ms ease;
 }
 
 .pagination button:hover:not(:disabled),
@@ -531,14 +522,13 @@ select {
   text-align: center;
 }
 
+.bottom-pagination {
+  margin: 28px auto 10px;
+}
+
 
 /* =========================================================
-   FIXED IMAGE GRID
-
-   IMPORTANT:
-   auto-fill / minmax removed.
-
-   The grid always uses 4 columns.
+   FOUR-COLUMN IMAGE GRID
 ========================================================= */
 
 .image-grid {
@@ -554,7 +544,7 @@ select {
 
 
 /* =========================================================
-   IMAGE CARD
+   IMAGE CARDS
 ========================================================= */
 
 .image-card {
@@ -602,7 +592,7 @@ select {
 
 
 /* =========================================================
-   FIXED THUMBNAIL SIZE
+   THUMBNAILS
 ========================================================= */
 
 .thumbnail {
@@ -627,11 +617,6 @@ select {
   object-fit: cover;
 }
 
-
-/* =========================================================
-   TIFF PREVIEW
-========================================================= */
-
 .no-preview {
   display: flex;
   align-items: center;
@@ -643,7 +628,6 @@ select {
   padding: 20px;
 
   background: #e8edf2;
-
   color: #687588;
 
   font-size: 0.75rem;
@@ -654,7 +638,7 @@ select {
 
 
 /* =========================================================
-   CARD INFORMATION
+   CARD METADATA
 ========================================================= */
 
 .card-details {
@@ -681,12 +665,23 @@ select {
   font-size: 0.75rem;
 }
 
+/*
+ * First span = Collection
+ * Second span = Category
+ */
+
 .card-details span {
   margin-top: 4px;
 
   color: #607083;
 
   font-size: 0.67rem;
+}
+
+.card-details span:nth-of-type(2) {
+  color: #2874c6;
+
+  font-weight: 650;
 }
 
 .card-details small {
@@ -701,16 +696,7 @@ select {
 
 
 /* =========================================================
-   BOTTOM PAGINATION
-========================================================= */
-
-.bottom-pagination {
-  margin: 28px auto 10px;
-}
-
-
-/* =========================================================
-   STATIC DETAILS PANEL
+   DETAILS PANEL
 ========================================================= */
 
 .details-panel {
@@ -733,6 +719,11 @@ select {
   background: #ffffff;
 }
 
+
+/* =========================================================
+   DETAILS HEADER
+========================================================= */
+
 .details-header {
   display: flex;
   align-items: center;
@@ -752,17 +743,20 @@ select {
 
   max-width: 270px;
 
+  color: #182230;
+
   font-size: 0.78rem;
 
   text-overflow: ellipsis;
+
   white-space: nowrap;
 }
 
 .details-header button {
+  flex-shrink: 0;
+
   width: 30px;
   height: 30px;
-
-  flex-shrink: 0;
 
   border: 0;
 
@@ -774,9 +768,13 @@ select {
   cursor: pointer;
 }
 
+.details-header button:hover {
+  color: #1f2937;
+}
+
 
 /* =========================================================
-   DETAILS IMAGE
+   LARGE PREVIEW
 ========================================================= */
 
 .details-preview {
@@ -805,15 +803,21 @@ select {
 
 
 /* =========================================================
-   DETAILS ACTION
+   DOWNLOAD / OPEN ORIGINAL ACTIONS
 ========================================================= */
 
 .details-actions {
+  display: flex;
+  align-items: center;
+
+  gap: 8px;
+
   padding: 11px 13px;
 
   border-bottom: 1px solid #e1e6ec;
 }
 
+.download-button,
 .details-actions a {
   display: inline-flex;
   align-items: center;
@@ -825,18 +829,60 @@ select {
 
   border-radius: 4px;
 
-  background: #2675cb;
-  color: #ffffff;
-
   font-size: 0.72rem;
   font-weight: 700;
 
   text-decoration: none;
+
+  cursor: pointer;
+
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+
+/* DOWNLOAD */
+
+.download-button {
+  border: 1px solid #2675cb;
+
+  background: #2675cb;
+  color: #ffffff;
+}
+
+.download-button:hover:not(:disabled) {
+  border-color: #1d64b2;
+
+  background: #1d64b2;
+}
+
+.download-button:disabled {
+  opacity: 0.55;
+
+  cursor: wait;
+}
+
+
+/* OPEN ORIGINAL */
+
+.details-actions a {
+  border: 1px solid #cbd4df;
+
+  background: #ffffff;
+  color: #354153;
+}
+
+.details-actions a:hover {
+  border-color: #2675cb;
+
+  color: #2675cb;
 }
 
 
 /* =========================================================
-   METADATA
+   SELECTED IMAGE METADATA
 ========================================================= */
 
 .metadata {
@@ -854,13 +900,23 @@ select {
 
   gap: 10px;
 
-  padding: 5px 0;
+  padding: 6px 0;
+
+  border-bottom:
+    1px solid
+    #f0f2f5;
 
   font-size: 0.68rem;
 }
 
+.metadata div:last-child {
+  border-bottom: 0;
+}
+
 .metadata dt {
   color: #87919e;
+
+  font-weight: 600;
 }
 
 .metadata dd {
@@ -872,4 +928,121 @@ select {
 }
 
 
-/* ================================
+/* =========================================================
+   STATUS / EMPTY STATE
+========================================================= */
+
+.status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 300px;
+
+  padding: 30px;
+
+  color: #657286;
+
+  text-align: center;
+}
+
+.status strong {
+  color: #354153;
+}
+
+.status p {
+  margin: 8px 0 0;
+
+  max-width: 520px;
+
+  line-height: 1.5;
+}
+
+.status.error {
+  color: #991b1b;
+}
+
+.status.error strong {
+  color: #991b1b;
+}
+
+
+/* =========================================================
+   WARNING
+========================================================= */
+
+.warning {
+  margin-bottom: 14px;
+
+  padding: 10px 12px;
+
+  border: 1px solid #f5d486;
+  border-radius: 4px;
+
+  background: #fff9e8;
+  color: #805d15;
+
+  font-size: 0.72rem;
+}
+
+
+/* =========================================================
+   LOADING SPINNER
+========================================================= */
+
+.spinner {
+  width: 34px;
+  height: 34px;
+
+  margin-bottom: 12px;
+
+  border: 4px solid #dfe5eb;
+  border-top-color: #347fd2;
+  border-radius: 50%;
+
+  animation:
+    archive-spin
+    700ms linear infinite;
+}
+
+@keyframes archive-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+
+/* =========================================================
+   ACCESSIBILITY
+========================================================= */
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline:
+    3px solid
+    rgb(52 127 210 / 32%);
+
+  outline-offset: 2px;
+}
+
+
+/* =========================================================
+   STATIC PAGE BEHAVIOR
+
+   No responsive breakpoints intentionally.
+
+   Viewer remains:
+   1440px total
+   230px sidebar
+   1210px application content
+
+   When details are open:
+   870px results
+   340px details
+
+   Small browser windows scroll horizontally rather than
+   resizing the archive interface.
+========================================================= */
