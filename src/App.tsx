@@ -323,21 +323,6 @@ export default function App() {
           </div>
         </div>
 
-        <nav className="side-nav" aria-label="Archive navigation">
-          <button type="button" className="side-nav-item active">
-            Search
-          </button>
-          <button type="button" className="side-nav-item">
-            Browse S3
-          </button>
-          <button type="button" className="side-nav-item">
-            Collections
-          </button>
-          <button type="button" className="side-nav-item">
-            Favorites
-          </button>
-        </nav>
-
         <div className="static-filters">
           <label htmlFor="archive-search">Search archive</label>
           <input
