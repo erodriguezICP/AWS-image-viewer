@@ -37,12 +37,16 @@ function toArchiveImage(item: {
   lastModified?: Date;
 }): ArchiveImage {
   const parts = relativeParts(item.path);
+
   return {
     path: item.path,
-    name: parts.at(-1) || item.path,
+    name: parts[parts.length - 1] || item.path,
     collection: parts.length > 1 ? parts[0] : UNCATEGORIZED,
     category: parts.length > 2 ? parts[1] : UNCATEGORIZED,
-    folder: parts.length > 1 ? parts.slice(0, -1).join(" / ") : UNCATEGORIZED,
+    folder:
+      parts.length > 1
+        ? parts.slice(0, -1).join(" / ")
+        : UNCATEGORIZED,
     size: item.size,
     lastModified: item.lastModified,
   };
