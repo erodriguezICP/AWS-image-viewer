@@ -1,10 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { getUrl, list } from "aws-amplify/storage";
 import "./App.css";
 
 type ArchiveImage = {
   path: string;
   name: string;
+  folder: string;
+  relativeFolder: string;
   size?: number;
   lastModified?: Date;
 };
@@ -13,20 +20,78 @@ type ArchiveImageWithUrl = ArchiveImage & {
   url: string;
 };
 
+type GroupedArchiveImages = {
+  folder: string;
+  images: ArchiveImageWithUrl[];
+};
+
 const ARCHIVE_PATH = "Key Manifest/";
+
+/*
+ * If the actual S3 prefix uses an underscore, use:
+ *
+ * const ARCHIVE_PATH = "Key_Manifest/";
+ */
 
 const S3_BUCKET = {
   bucketName: "manifest-inventory",
   region: "us-east-1",
 };
 
-const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
+const IMAGE_FILE =
+  /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
+
+const BROWSER_PREVIEW_FILE =
+  /\.(avif|bmp|gif|jpe?g|png|webp)$/i;
 
 const PAGE_SIZE = 24;
 const URL_EXPIRATION_SECONDS = 3600;
+const ALL_FOLDERS = "All folders";
+const ROOT_FOLDER = "Uncategorized";
 
 function getFileName(path: string): string {
   return path.split("/").pop() || path;
+}
+
+function getRelativePath(path: string): string {
+  if (path.startsWith(ARCHIVE_PATH)) {
+    return path.slice(ARCHIVE_PATH.length);
+  }
+
+  return path;
+}
+
+function getFolderName(path: string): string {
+  const relativePath = getRelativePath(path);
+  const parts = relativePath.split("/").filter(Boolean);
+
+  if (parts.length <= 1) {
+    return ROOT_FOLDER;
+  }
+
+  /*
+   * Uses the first folder below ARCHIVE_PATH as the category.
+   *
+   * Example:
+   * Key Manifest/Events/2025/photo.jpg
+   *
+   * Category:
+   * Events
+   */
+  return parts[0];
+}
+
+function getRelativeFolder(path: string): string {
+  const relativePath = getRelativePath(path);
+  const parts = relativePath.split("/").filter(Boolean);
+
+  if (parts.length <= 1) {
+    return ROOT_FOLDER;
+  }
+
+  parts.pop();
+
+  return parts.join(" / ");
 }
 
 function formatBytes(bytes?: number): string {
@@ -45,41 +110,49 @@ function formatBytes(bytes?: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function isBrowserDisplayableImage(path: string): boolean {
-  return /\.(avif|bmp|gif|jpe?g|png|webp)$/i.test(path);
+function canPreviewInBrowser(path: string): boolean {
+  return BROWSER_PREVIEW_FILE.test(path);
 }
 
 export default function App() {
   const [images, setImages] = useState<ArchiveImage[]>([]);
-  const [displayImages, setDisplayImages] = useState<ArchiveImageWithUrl[]>([]);
+  const [displayImages, setDisplayImages] = useState<
+    ArchiveImageWithUrl[]
+  >([]);
 
   const [search, setSearch] = useState("");
+  const [selectedFolder, setSelectedFolder] =
+    useState(ALL_FOLDERS);
   const [currentPage, setCurrentPage] = useState(1);
 
-  const [selected, setSelected] =
+  const [selectedImage, setSelectedImage] =
     useState<ArchiveImageWithUrl | null>(null);
 
-  const [loadingArchive, setLoadingArchive] = useState(true);
-  const [loadingPage, setLoadingPage] = useState(false);
+  const [loadingArchive, setLoadingArchive] =
+    useState(true);
+  const [loadingPage, setLoadingPage] =
+    useState(false);
 
   const [archiveError, setArchiveError] = useState("");
-  const [pageError, setPageError] = useState("");
-
-  const urlCache = useRef<Map<string, string>>(new Map());
+  const [pageWarning, setPageWarning] = useState("");
 
   /*
-   * STEP 1
+   * Signed URLs are cached for the current browser session.
+   * This prevents repeat getUrl calls when users revisit a page.
+   */
+  const urlCache = useRef<Map<string, string>>(
+    new Map(),
+  );
+
+  /*
+   * Load image metadata from S3.
    *
-   * List the S3 objects.
-   *
-   * IMPORTANT:
-   * This does NOT generate a signed URL for every object.
-   * The original application generated hundreds of URLs at once.
+   * This does not generate signed URLs for all images.
    */
   useEffect(() => {
     let cancelled = false;
 
-    async function loadArchive() {
+    async function loadArchiveMetadata() {
       try {
         setLoadingArchive(true);
         setArchiveError("");
@@ -92,31 +165,60 @@ export default function App() {
           },
         });
 
-        const foundImages: ArchiveImage[] = result.items
-          .filter((item) => IMAGE_FILE.test(item.path))
-          .map((item) => ({
-            path: item.path,
-            name: getFileName(item.path),
-            size: item.size,
-            lastModified: item.lastModified,
-          }))
-          .sort((a, b) =>
-            a.name.localeCompare(b.name, undefined, {
-              numeric: true,
-              sensitivity: "base",
-            }),
-          );
+        const archiveImages: ArchiveImage[] =
+          result.items
+            .filter((item) =>
+              IMAGE_FILE.test(item.path),
+            )
+            .map((item) => ({
+              path: item.path,
+              name: getFileName(item.path),
+              folder: getFolderName(item.path),
+              relativeFolder: getRelativeFolder(
+                item.path,
+              ),
+              size: item.size,
+              lastModified: item.lastModified,
+            }))
+            .sort((a, b) => {
+              const folderComparison =
+                a.relativeFolder.localeCompare(
+                  b.relativeFolder,
+                  undefined,
+                  {
+                    numeric: true,
+                    sensitivity: "base",
+                  },
+                );
+
+              if (folderComparison !== 0) {
+                return folderComparison;
+              }
+
+              return a.name.localeCompare(
+                b.name,
+                undefined,
+                {
+                  numeric: true,
+                  sensitivity: "base",
+                },
+              );
+            });
 
         if (!cancelled) {
-          setImages(foundImages);
+          setImages(archiveImages);
         }
       } catch (error) {
-        console.error("Unable to list archive:", error);
+        console.error(
+          "Unable to list archive images:",
+          error,
+        );
 
         if (!cancelled) {
           setArchiveError(
-            `Unable to load the archive from "${ARCHIVE_PATH}". ` +
-              "Verify the S3 prefix, bucket name, region, and Amplify Storage permissions.",
+            `Unable to load images from "${ARCHIVE_PATH}". ` +
+              "Verify the exact S3 prefix, bucket name, " +
+              "AWS Region, and Amplify Storage permissions.",
           );
         }
       } finally {
@@ -126,7 +228,7 @@ export default function App() {
       }
     }
 
-    void loadArchive();
+    void loadArchiveMetadata();
 
     return () => {
       cancelled = true;
@@ -134,25 +236,76 @@ export default function App() {
   }, []);
 
   /*
-   * STEP 2
+   * Build the folder category list from the S3 object paths.
+   */
+  const folders = useMemo(() => {
+    const uniqueFolders = new Set(
+      images.map((image) => image.folder),
+    );
+
+    return [
+      ALL_FOLDERS,
+      ...Array.from(uniqueFolders).sort((a, b) =>
+        a.localeCompare(b, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }),
+      ),
+    ];
+  }, [images]);
+
+  /*
+   * Count the number of images in each category.
+   */
+  const folderCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    counts.set(ALL_FOLDERS, images.length);
+
+    for (const image of images) {
+      counts.set(
+        image.folder,
+        (counts.get(image.folder) || 0) + 1,
+      );
+    }
+
+    return counts;
+  }, [images]);
+
+  /*
+   * Search the entire archive metadata before pagination.
    *
-   * Search against the metadata.
-   *
-   * Searching does not download hundreds of images.
+   * This lets users find images that are not displayed
+   * on the current page.
    */
   const filteredImages = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    if (!query) {
-      return images;
-    }
-
     return images.filter((image) => {
-      const searchableText = `${image.name} ${image.path}`.toLowerCase();
+      const matchesFolder =
+        selectedFolder === ALL_FOLDERS ||
+        image.folder === selectedFolder;
+
+      if (!matchesFolder) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      const searchableText = [
+        image.name,
+        image.path,
+        image.folder,
+        image.relativeFolder,
+      ]
+        .join(" ")
+        .toLowerCase();
 
       return searchableText.includes(query);
     });
-  }, [images, search]);
+  }, [images, search, selectedFolder]);
 
   const totalPages = Math.max(
     1,
@@ -160,14 +313,14 @@ export default function App() {
   );
 
   /*
-   * Reset pagination when a new search is entered.
+   * Reset to page 1 whenever search or folder changes.
    */
   useEffect(() => {
     setCurrentPage(1);
-  }, [search]);
+  }, [search, selectedFolder]);
 
   /*
-   * Prevent the current page from being outside the valid range.
+   * Keep the current page inside the valid range.
    */
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -176,11 +329,9 @@ export default function App() {
   }, [currentPage, totalPages]);
 
   /*
-   * STEP 3
-   *
-   * Only take 24 records for the current page.
+   * Select only the metadata for the current page.
    */
-  const currentPageImages = useMemo(() => {
+  const currentPageMetadata = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
     const end = start + PAGE_SIZE;
 
@@ -188,33 +339,30 @@ export default function App() {
   }, [filteredImages, currentPage]);
 
   /*
-   * STEP 4
-   *
-   * Generate S3 URLs ONLY for the images on the current page.
-   *
-   * This is the main fix for the previous hundreds-of-requests problem.
+   * Generate signed URLs only for images on the current page.
    */
   useEffect(() => {
     let cancelled = false;
 
-    async function loadPageImages() {
-      if (currentPageImages.length === 0) {
+    async function loadCurrentPage() {
+      if (currentPageMetadata.length === 0) {
         setDisplayImages([]);
+        setPageWarning("");
         return;
       }
 
       try {
         setLoadingPage(true);
-        setPageError("");
+        setPageWarning("");
 
         const results = await Promise.allSettled(
-          currentPageImages.map(
-            async (image): Promise<ArchiveImageWithUrl> => {
-              /*
-               * Reuse an existing URL if this image has already
-               * been loaded during this session.
-               */
-              const cachedUrl = urlCache.current.get(image.path);
+          currentPageMetadata.map(
+            async (
+              image,
+            ): Promise<ArchiveImageWithUrl> => {
+              const cachedUrl = urlCache.current.get(
+                image.path,
+              );
 
               if (cachedUrl) {
                 return {
@@ -223,42 +371,42 @@ export default function App() {
                 };
               }
 
-              /*
-               * Ask Amplify for the signed URL.
-               */
               const result = await getUrl({
                 path: image.path,
                 options: {
                   bucket: S3_BUCKET,
-                  expiresIn: URL_EXPIRATION_SECONDS,
+                  expiresIn:
+                    URL_EXPIRATION_SECONDS,
                 },
               });
 
-              const url = result.url.toString();
+              const signedUrl =
+                result.url.toString();
 
-              /*
-               * Store it so going back to this page does not
-               * immediately generate another signed URL.
-               */
-              urlCache.current.set(image.path, url);
+              urlCache.current.set(
+                image.path,
+                signedUrl,
+              );
 
               return {
                 ...image,
-                url,
+                url: signedUrl,
               };
             },
           ),
         );
 
-        const successful: ArchiveImageWithUrl[] = [];
+        const successfulImages: ArchiveImageWithUrl[] =
+          [];
 
-        let failures = 0;
+        let failedCount = 0;
 
         for (const result of results) {
           if (result.status === "fulfilled") {
-            successful.push(result.value);
+            successfulImages.push(result.value);
           } else {
-            failures += 1;
+            failedCount += 1;
+
             console.error(
               "Unable to generate image URL:",
               result.reason,
@@ -267,22 +415,25 @@ export default function App() {
         }
 
         if (!cancelled) {
-          setDisplayImages(successful);
+          setDisplayImages(successfulImages);
 
-          if (failures > 0) {
-            setPageError(
-              `${failures} image${
-                failures === 1 ? "" : "s"
+          if (failedCount > 0) {
+            setPageWarning(
+              `${failedCount} image${
+                failedCount === 1 ? "" : "s"
               } on this page could not be loaded.`,
             );
           }
         }
       } catch (error) {
-        console.error("Unable to load current page:", error);
+        console.error(
+          "Unable to load the current page:",
+          error,
+        );
 
         if (!cancelled) {
           setDisplayImages([]);
-          setPageError(
+          setPageWarning(
             "Unable to generate image URLs for this page.",
           );
         }
@@ -293,73 +444,141 @@ export default function App() {
       }
     }
 
-    void loadPageImages();
+    void loadCurrentPage();
 
     return () => {
       cancelled = true;
     };
-  }, [currentPageImages]);
+  }, [currentPageMetadata]);
 
   /*
-   * Allow Escape to close the lightbox.
+   * Group the current page into S3 folder sections.
+   */
+  const groupedImages = useMemo(() => {
+    const groups = new Map<
+      string,
+      ArchiveImageWithUrl[]
+    >();
+
+    for (const image of displayImages) {
+      const groupingFolder =
+        image.relativeFolder || ROOT_FOLDER;
+
+      const existingImages =
+        groups.get(groupingFolder) || [];
+
+      existingImages.push(image);
+
+      groups.set(
+        groupingFolder,
+        existingImages,
+      );
+    }
+
+    return Array.from(groups.entries())
+      .sort(([folderA], [folderB]) =>
+        folderA.localeCompare(
+          folderB,
+          undefined,
+          {
+            numeric: true,
+            sensitivity: "base",
+          },
+        ),
+      )
+      .map(
+        ([folder, groupedFolderImages]): GroupedArchiveImages => ({
+          folder,
+          images: groupedFolderImages,
+        }),
+      );
+  }, [displayImages]);
+
+  /*
+   * Close the lightbox with the Escape key.
    */
   useEffect(() => {
-    if (!selected) {
+    if (!selectedImage) {
       return;
     }
 
-    function handleKeyDown(event: KeyboardEvent) {
+    function handleKeyDown(
+      event: KeyboardEvent,
+    ) {
       if (event.key === "Escape") {
-        setSelected(null);
+        setSelectedImage(null);
       }
     }
 
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [selected]);
-
-  function previousPage() {
-    setCurrentPage((page) => Math.max(1, page - 1));
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
-  }
-
-  function nextPage() {
-    setCurrentPage((page) =>
-      Math.min(totalPages, page + 1),
+    window.addEventListener(
+      "keydown",
+      handleKeyDown,
     );
 
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleKeyDown,
+      );
+    };
+  }, [selectedImage]);
+
+  function goToPage(page: number) {
+    const validPage = Math.min(
+      totalPages,
+      Math.max(1, page),
+    );
+
+    setCurrentPage(validPage);
+
     window.scrollTo({
       top: 0,
       behavior: "smooth",
     });
   }
+
+  function clearFilters() {
+    setSearch("");
+    setSelectedFolder(ALL_FOLDERS);
+    setCurrentPage(1);
+  }
+
+  const firstVisibleResult =
+    filteredImages.length === 0
+      ? 0
+      : (currentPage - 1) * PAGE_SIZE + 1;
+
+  const lastVisibleResult = Math.min(
+    currentPage * PAGE_SIZE,
+    filteredImages.length,
+  );
 
   return (
     <div className="archive-app">
       <header className="archive-header">
         <div className="header-content">
-          <p className="eyebrow">Digital Collection</p>
+          <p className="eyebrow">
+            Digital Collection
+          </p>
 
           <h1>Archive Image Viewer</h1>
 
           <p className="header-description">
-            Search the archive and select a thumbnail to view
-            the full image.
+            Search the entire archive, browse by
+            folder, and open an image to view the
+            original.
           </p>
         </div>
       </header>
 
       <main className="archive-main">
-        <section className="archive-controls">
-          <div className="search-container">
+        <section
+          className="archive-controls"
+          aria-label="Archive search and filters"
+        >
+          <div className="search-field">
             <label htmlFor="archive-search">
-              Search archive
+              Search all images
             </label>
 
             <input
@@ -369,16 +588,69 @@ export default function App() {
               onChange={(event) =>
                 setSearch(event.target.value)
               }
-              placeholder="Search by filename..."
+              placeholder="Search filename or folder..."
+              autoComplete="off"
             />
           </div>
 
-          <div className="archive-count">
-            <strong>{filteredImages.length}</strong>
-            <span>
-              {" "}
-              of {images.length} images
-            </span>
+          <div className="folder-field">
+            <label htmlFor="folder-filter">
+              Folder category
+            </label>
+
+            <select
+              id="folder-filter"
+              value={selectedFolder}
+              onChange={(event) =>
+                setSelectedFolder(
+                  event.target.value,
+                )
+              }
+            >
+              {folders.map((folder) => (
+                <option
+                  key={folder}
+                  value={folder}
+                >
+                  {folder} (
+                  {folderCounts.get(folder) || 0})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            type="button"
+            className="clear-button"
+            onClick={clearFilters}
+            disabled={
+              search.length === 0 &&
+              selectedFolder === ALL_FOLDERS
+            }
+          >
+            Clear filters
+          </button>
+        </section>
+
+        <section className="archive-summary">
+          <div>
+            <strong>
+              {filteredImages.length}
+            </strong>{" "}
+            result
+            {filteredImages.length === 1
+              ? ""
+              : "s"}
+          </div>
+
+          <div>
+            {filteredImages.length > 0 && (
+              <>
+                Showing {firstVisibleResult} to{" "}
+                {lastVisibleResult} of{" "}
+                {filteredImages.length}
+              </>
+            )}
           </div>
         </section>
 
@@ -389,7 +661,12 @@ export default function App() {
               aria-hidden="true"
             />
 
-            <p>Loading archive records...</p>
+            <strong>Loading archive</strong>
+
+            <p>
+              Reading image and folder metadata
+              from S3.
+            </p>
           </div>
         )}
 
@@ -412,8 +689,18 @@ export default function App() {
               <p>
                 {images.length === 0
                   ? `No supported image files were found under "${ARCHIVE_PATH}".`
-                  : `No archive images match "${search}".`}
+                  : "No images match the current search and folder filters."}
               </p>
+
+              {images.length > 0 && (
+                <button
+                  type="button"
+                  className="status-clear-button"
+                  onClick={clearFilters}
+                >
+                  Clear filters
+                </button>
+              )}
             </div>
           )}
 
@@ -421,124 +708,16 @@ export default function App() {
           !archiveError &&
           filteredImages.length > 0 && (
             <>
-              <div className="results-toolbar">
-                <div>
-                  Page{" "}
-                  <strong>{currentPage}</strong>
-                  {" "}of{" "}
-                  <strong>{totalPages}</strong>
-                </div>
-
-                <div className="page-range">
-                  Showing{" "}
-                  {(currentPage - 1) * PAGE_SIZE + 1}
-                  {" - "}
-                  {Math.min(
-                    currentPage * PAGE_SIZE,
-                    filteredImages.length,
-                  )}
-                </div>
-              </div>
-
-              {pageError && (
-                <div
-                  className="page-warning"
-                  role="status"
-                >
-                  {pageError}
-                </div>
-              )}
-
-              {loadingPage ? (
-                <div className="status-panel">
-                  <div
-                    className="spinner"
-                    aria-hidden="true"
-                  />
-                  <p>
-                    Loading page {currentPage}...
-                  </p>
-                </div>
-              ) : (
-                <section
-                  className="image-grid"
-                  aria-label="Archive images"
-                >
-                  {displayImages.map((image) => (
-                    <button
-                      key={image.path}
-                      className="image-card"
-                      type="button"
-                      onClick={() =>
-                        setSelected(image)
-                      }
-                      aria-label={`Open ${image.name}`}
-                    >
-                      <div className="thumbnail-container">
-                        {isBrowserDisplayableImage(
-                          image.path,
-                        ) ? (
-                          <img
-                            src={image.url}
-                            alt={image.name}
-                            loading="lazy"
-                            decoding="async"
-                            onError={(event) => {
-                              console.error(
-                                "Browser failed to display:",
-                                image.path,
-                              );
-
-                              event.currentTarget.classList.add(
-                                "image-load-error",
-                              );
-                            }}
-                          />
-                        ) : (
-                          <div className="unsupported-preview">
-                            <span>TIFF</span>
-                            <small>
-                              Open image to view original
-                            </small>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="image-info">
-                        <strong
-                          className="image-name"
-                          title={image.name}
-                        >
-                          {image.name}
-                        </strong>
-
-                        <div className="image-metadata">
-                          <span>
-                            {image.lastModified
-                              ? image.lastModified.toLocaleDateString()
-                              : "Date unavailable"}
-                          </span>
-
-                          {image.size !== undefined && (
-                            <span>
-                              {formatBytes(image.size)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </section>
-              )}
-
               <nav
-                className="pagination"
-                aria-label="Archive pagination"
+                className="pagination pagination-top"
+                aria-label="Top archive pagination"
               >
                 <button
                   type="button"
                   className="pagination-button"
-                  onClick={previousPage}
+                  onClick={() =>
+                    goToPage(currentPage - 1)
+                  }
                   disabled={
                     currentPage === 1 ||
                     loadingPage
@@ -548,16 +727,191 @@ export default function App() {
                 </button>
 
                 <div className="pagination-status">
-                  <span>Page</span>
+                  Page{" "}
                   <strong>{currentPage}</strong>
-                  <span>of</span>
+                  {" "}of{" "}
                   <strong>{totalPages}</strong>
                 </div>
 
                 <button
                   type="button"
                   className="pagination-button"
-                  onClick={nextPage}
+                  onClick={() =>
+                    goToPage(currentPage + 1)
+                  }
+                  disabled={
+                    currentPage === totalPages ||
+                    loadingPage
+                  }
+                >
+                  Next
+                </button>
+              </nav>
+
+              {pageWarning && (
+                <div
+                  className="page-warning"
+                  role="status"
+                >
+                  {pageWarning}
+                </div>
+              )}
+
+              {loadingPage ? (
+                <div className="status-panel">
+                  <div
+                    className="spinner"
+                    aria-hidden="true"
+                  />
+
+                  <strong>
+                    Loading page {currentPage}
+                  </strong>
+
+                  <p>
+                    Generating URLs for up to{" "}
+                    {PAGE_SIZE} images.
+                  </p>
+                </div>
+              ) : (
+                <div className="folder-groups">
+                  {groupedImages.map((group) => (
+                    <section
+                      className="folder-group"
+                      key={group.folder}
+                    >
+                      <header className="folder-heading">
+                        <div className="folder-icon">
+                          📁
+                        </div>
+
+                        <div>
+                          <h2>{group.folder}</h2>
+
+                          <p>
+                            {group.images.length} image
+                            {group.images.length === 1
+                              ? ""
+                              : "s"}{" "}
+                            on this page
+                          </p>
+                        </div>
+                      </header>
+
+                      <div className="image-grid">
+                        {group.images.map(
+                          (image) => (
+                            <button
+                              key={image.path}
+                              type="button"
+                              className="image-card"
+                              onClick={() =>
+                                setSelectedImage(
+                                  image,
+                                )
+                              }
+                              aria-label={`Open ${image.name}`}
+                            >
+                              <div className="thumbnail-container">
+                                {canPreviewInBrowser(
+                                  image.path,
+                                ) ? (
+                                  <img
+                                    src={image.url}
+                                    alt=""
+                                    loading="lazy"
+                                    decoding="async"
+                                    onError={(
+                                      event,
+                                    ) => {
+                                      event.currentTarget.classList.add(
+                                        "image-load-error",
+                                      );
+
+                                      console.error(
+                                        "Browser could not display:",
+                                        image.path,
+                                      );
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="unsupported-preview">
+                                    <strong>
+                                      TIFF
+                                    </strong>
+
+                                    <span>
+                                      Preview unavailable
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="image-info">
+                                <strong
+                                  className="image-name"
+                                  title={image.name}
+                                >
+                                  {image.name}
+                                </strong>
+
+                                <div className="image-metadata">
+                                  <span>
+                                    {image.lastModified
+                                      ? image.lastModified.toLocaleDateString()
+                                      : "Date unavailable"}
+                                  </span>
+
+                                  {image.size !==
+                                    undefined && (
+                                    <span>
+                                      {formatBytes(
+                                        image.size,
+                                      )}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              )}
+
+              <nav
+                className="pagination"
+                aria-label="Bottom archive pagination"
+              >
+                <button
+                  type="button"
+                  className="pagination-button"
+                  onClick={() =>
+                    goToPage(currentPage - 1)
+                  }
+                  disabled={
+                    currentPage === 1 ||
+                    loadingPage
+                  }
+                >
+                  Previous
+                </button>
+
+                <div className="pagination-status">
+                  Page{" "}
+                  <strong>{currentPage}</strong>
+                  {" "}of{" "}
+                  <strong>{totalPages}</strong>
+                </div>
+
+                <button
+                  type="button"
+                  className="pagination-button"
+                  onClick={() =>
+                    goToPage(currentPage + 1)
+                  }
                   disabled={
                     currentPage === totalPages ||
                     loadingPage
@@ -570,49 +924,52 @@ export default function App() {
           )}
       </main>
 
-      {selected && (
+      {selectedImage && (
         <div
           className="lightbox"
           role="dialog"
           aria-modal="true"
-          aria-label={`Viewing ${selected.name}`}
+          aria-label={`Viewing ${selectedImage.name}`}
           onMouseDown={(event) => {
             if (
-              event.target === event.currentTarget
+              event.target ===
+              event.currentTarget
             ) {
-              setSelected(null);
+              setSelectedImage(null);
             }
           }}
         >
           <div className="lightbox-content">
-            <div className="lightbox-header">
-              <div>
-                <p className="lightbox-label">
-                  Archive image
-                </p>
+            <header className="lightbox-header">
+              <div className="lightbox-title">
+                <span>
+                  {selectedImage.relativeFolder}
+                </span>
 
                 <strong>
-                  {selected.name}
+                  {selectedImage.name}
                 </strong>
               </div>
 
               <button
                 type="button"
                 className="close-button"
-                onClick={() => setSelected(null)}
+                onClick={() =>
+                  setSelectedImage(null)
+                }
                 aria-label="Close image viewer"
               >
                 ×
               </button>
-            </div>
+            </header>
 
-            <div className="lightbox-image-container">
-              {isBrowserDisplayableImage(
-                selected.path,
+            <div className="lightbox-image">
+              {canPreviewInBrowser(
+                selectedImage.path,
               ) ? (
                 <img
-                  src={selected.url}
-                  alt={selected.name}
+                  src={selectedImage.url}
+                  alt={selectedImage.name}
                 />
               ) : (
                 <div className="tiff-message">
@@ -621,39 +978,48 @@ export default function App() {
                   </strong>
 
                   <p>
-                    This image is a TIFF file.
-                    Download or open the original
-                    to view it in a compatible
-                    application.
+                    This is a TIFF image. Open the
+                    original file in a compatible
+                    image application.
                   </p>
                 </div>
               )}
             </div>
 
-            <div className="lightbox-footer">
+            <footer className="lightbox-footer">
               <div className="lightbox-details">
-                {selected.lastModified && (
+                <span>
+                  Folder:{" "}
+                  {selectedImage.relativeFolder}
+                </span>
+
+                {selectedImage.lastModified && (
                   <span>
-                    {selected.lastModified.toLocaleDateString()}
+                    Modified:{" "}
+                    {selectedImage.lastModified.toLocaleDateString()}
                   </span>
                 )}
 
-                {selected.size !== undefined && (
+                {selectedImage.size !==
+                  undefined && (
                   <span>
-                    {formatBytes(selected.size)}
+                    Size:{" "}
+                    {formatBytes(
+                      selectedImage.size,
+                    )}
                   </span>
                 )}
               </div>
 
               <a
                 className="open-original"
-                href={selected.url}
+                href={selectedImage.url}
                 target="_blank"
                 rel="noreferrer"
               >
                 Open original
               </a>
-            </div>
+            </footer>
           </div>
         </div>
       )}
