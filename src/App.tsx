@@ -102,6 +102,7 @@ export default function App() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<DisplayImage | null>(null);
   const [loadingInitialBatch, setLoadingInitialBatch] = useState(true);
+  const [showLoadingScreen, setShowLoadingScreen] = useState(true);
   const [indexingArchive, setIndexingArchive] = useState(false);
   const [loadingPage, setLoadingPage] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -193,13 +194,9 @@ export default function App() {
       } catch (caughtError) {
         console.error("Unable to load archive:", caughtError);
         if (active) {
-          if (images.length === 0) {
-            setError(
-              `Unable to load images from "${S3_BUCKET.bucketName}/${ARCHIVE_PATH}". Check the S3 prefix and Storage permissions.`,
-            );
-          } else {
-            setWarning("The first archive results loaded, but background indexing stopped early.");
-          }
+          setError(
+            `Unable to load images from "${S3_BUCKET.bucketName}/${ARCHIVE_PATH}". Check the S3 prefix and Storage permissions.`,
+          );
         }
       } finally {
         if (active) {
@@ -214,6 +211,14 @@ export default function App() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if ((!loadingInitialBatch && images.length > 0) || error) {
+      const timeout = window.setTimeout(() => setShowLoadingScreen(false), 250);
+      return () => window.clearTimeout(timeout);
+    }
+    return undefined;
+  }, [loadingInitialBatch, images.length, error]);
 
   const collections = useMemo(
     () =>
@@ -378,100 +383,111 @@ export default function App() {
   const lastResult = Math.min(page * PAGE_SIZE, filteredImages.length);
 
   return (
-    <div className="archive-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">ICP</div>
-          <div><strong>Image Archive</strong><span>Digital Collection</span></div>
+    <>
+      {showLoadingScreen && (
+        <div className="archive-loading-screen" role="status" aria-live="polite">
+          <div className="archive-loading-card">
+            <div className="spinner" aria-hidden="true" />
+            <h2>Loading Image Archive</h2>
+            <p>Preparing the first results. The remaining archive will continue indexing in the background.</p>
+            <div className="archive-loading-progress" aria-hidden="true" />
+          </div>
         </div>
-        <div className="static-filters">
-          <label htmlFor="archive-search">Search archive</label>
-          <input id="archive-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filename, folder, collection..." autoComplete="off" />
-          <label htmlFor="collection-filter">Collection</label>
-          <select id="collection-filter" value={collection} onChange={(event) => setCollection(event.target.value)}>
-            <option value={ALL_COLLECTIONS}>All collections</option>
-            {collections.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <label htmlFor="category-filter">Category</label>
-          <select id="category-filter" value={category} onChange={(event) => setCategory(event.target.value)}>
-            <option value={ALL_CATEGORIES}>All categories</option>
-            {categories.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <button type="button" className="clear-button" onClick={clearFilters}>Clear filters</button>
-          <div className="result-count"><span>{indexingArchive ? "Indexed so far" : "Results"}</span><strong>{filteredImages.length.toLocaleString()}</strong></div>
-          {indexingArchive && <div className="indexing-note">Archive available. Indexing remaining files in the background...</div>}
-        </div>
-      </aside>
+      )}
 
-      <main className="main-content">
-        <header className="top-header"><div><h1>Image Archive</h1><p>People. Photographs. A brighter tomorrow.</p></div></header>
+      <div className="archive-shell">
+        <aside className="sidebar">
+          <div className="brand">
+            <div className="brand-mark">ICP</div>
+            <div><strong>Image Archive</strong><span>Digital Collection</span></div>
+          </div>
+          <div className="static-filters">
+            <label htmlFor="archive-search">Search archive</label>
+            <input id="archive-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filename, folder, collection..." autoComplete="off" />
+            <label htmlFor="collection-filter">Collection</label>
+            <select id="collection-filter" value={collection} onChange={(event) => setCollection(event.target.value)}>
+              <option value={ALL_COLLECTIONS}>All collections</option>
+              {collections.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+            <label htmlFor="category-filter">Category</label>
+            <select id="category-filter" value={category} onChange={(event) => setCategory(event.target.value)}>
+              <option value={ALL_CATEGORIES}>All categories</option>
+              {categories.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+            <button type="button" className="clear-button" onClick={clearFilters}>Clear filters</button>
+            <div className="result-count"><span>{indexingArchive ? "Indexed so far" : "Results"}</span><strong>{filteredImages.length.toLocaleString()}</strong></div>
+            {indexingArchive && <div className="indexing-note">Archive available. Indexing remaining files in the background...</div>}
+          </div>
+        </aside>
 
-        {loadingInitialBatch ? (
-          <div className="status"><div className="spinner" aria-hidden="true" /><strong>Loading the first archive results...</strong></div>
-        ) : error ? (
-          <div className="status error"><strong>Archive unavailable</strong><p>{error}</p></div>
-        ) : (
-          <div className={selected ? "content-layout details-open" : "content-layout"}>
-            <section className="results-area">
-              <div className="results-toolbar">
-                <div className="results-summary"><strong>{filteredImages.length.toLocaleString()} {indexingArchive ? "indexed" : "results"}</strong>{filteredImages.length > 0 && <span>Showing {firstResult} to {lastResult}</span>}</div>
-                <nav className="pagination" aria-label="Archive pagination">
+        <main className="main-content">
+          <header className="top-header"><div><h1>Image Archive</h1><p>People. Photographs. A brighter tomorrow.</p></div></header>
+
+          {error ? (
+            <div className="status error"><strong>Archive unavailable</strong><p>{error}</p></div>
+          ) : (
+            <div className={selected ? "content-layout details-open" : "content-layout"}>
+              <section className="results-area">
+                <div className="results-toolbar">
+                  <div className="results-summary"><strong>{filteredImages.length.toLocaleString()} {indexingArchive ? "indexed" : "results"}</strong>{filteredImages.length > 0 && <span>Showing {firstResult} to {lastResult}</span>}</div>
+                  <nav className="pagination" aria-label="Archive pagination">
+                    <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1}>Previous</button>
+                    <span>Page <strong>{page}</strong> of <strong>{totalPages}</strong></span>
+                    <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages}>Next</button>
+                  </nav>
+                </div>
+
+                {warning && <div className="warning">{warning}</div>}
+
+                {filteredImages.length === 0 ? (
+                  <div className="status"><strong>No images found</strong><p>{indexingArchive ? "More archive files are still being indexed." : "Change the search, collection, or category."}</p></div>
+                ) : (
+                  <div className="image-grid">
+                    {pageImages.map((image, index) => (
+                      <button key={image.path} type="button" className={selected?.path === image.path ? "image-card selected" : "image-card"} onClick={() => image.url && setSelected(image)} disabled={!image.url}>
+                        <div className="thumbnail">
+                          {image.url && BROWSER_IMAGE.test(image.path) ? (
+                            <img src={image.url} alt={image.name} loading={index < 4 ? "eager" : "lazy"} decoding="async" fetchPriority={index < 4 ? "high" : "auto"} />
+                          ) : image.failed ? (
+                            <div className="no-preview">Unavailable</div>
+                          ) : (
+                            <div className="thumbnail-skeleton" aria-hidden="true" />
+                          )}
+                        </div>
+                        <div className="card-details"><strong title={image.name}>{image.name}</strong><span>{image.collection}</span><span>{image.category}</span><small>{image.lastModified ? image.lastModified.toLocaleDateString() : "Date unavailable"}</small></div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <nav className="bottom-pagination" aria-label="Bottom pagination">
                   <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1}>Previous</button>
-                  <span>Page <strong>{page}</strong> of <strong>{totalPages}</strong></span>
+                  <span>{loadingPage ? "Loading thumbnails..." : `Page ${page} of ${totalPages}`}</span>
                   <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages}>Next</button>
                 </nav>
-              </div>
+              </section>
 
-              {warning && <div className="warning">{warning}</div>}
-
-              {filteredImages.length === 0 ? (
-                <div className="status"><strong>No images found</strong><p>{indexingArchive ? "More archive files are still being indexed." : "Change the search, collection, or category."}</p></div>
-              ) : (
-                <div className="image-grid">
-                  {pageImages.map((image, index) => (
-                    <button key={image.path} type="button" className={selected?.path === image.path ? "image-card selected" : "image-card"} onClick={() => image.url && setSelected(image)} disabled={!image.url}>
-                      <div className="thumbnail">
-                        {image.url && BROWSER_IMAGE.test(image.path) ? (
-                          <img src={image.url} alt={image.name} loading={index < 4 ? "eager" : "lazy"} decoding="async" fetchPriority={index < 4 ? "high" : "auto"} />
-                        ) : image.failed ? (
-                          <div className="no-preview">Unavailable</div>
-                        ) : (
-                          <div className="thumbnail-skeleton" aria-hidden="true" />
-                        )}
-                      </div>
-                      <div className="card-details"><strong title={image.name}>{image.name}</strong><span>{image.collection}</span><span>{image.category}</span><small>{image.lastModified ? image.lastModified.toLocaleDateString() : "Date unavailable"}</small></div>
-                    </button>
-                  ))}
-                </div>
+              {selected && (
+                <aside className="details-panel">
+                  <div className="details-header"><strong title={selected.name}>{selected.name}</strong><button type="button" onClick={() => setSelected(null)} aria-label="Close details panel">x</button></div>
+                  <div className="details-preview">{selected.url && <img src={selected.url} alt={selected.name} />}</div>
+                  <div className="details-actions">
+                    <button type="button" className="download-button" disabled={downloading} onClick={() => void downloadImage(selected)}>{downloading ? "Downloading..." : "Download"}</button>
+                    <a href={selected.url} target="_blank" rel="noreferrer">Open original</a>
+                  </div>
+                  <dl className="metadata">
+                    <div><dt>Filename</dt><dd>{selected.name}</dd></div>
+                    <div><dt>Collection</dt><dd>{selected.collection}</dd></div>
+                    <div><dt>Category</dt><dd>{selected.category}</dd></div>
+                    <div><dt>Folder</dt><dd>{selected.folder}</dd></div>
+                    <div><dt>File size</dt><dd>{formatBytes(selected.size)}</dd></div>
+                  </dl>
+                </aside>
               )}
-
-              <nav className="bottom-pagination" aria-label="Bottom pagination">
-                <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1}>Previous</button>
-                <span>{loadingPage ? "Loading thumbnails..." : `Page ${page} of ${totalPages}`}</span>
-                <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages}>Next</button>
-              </nav>
-            </section>
-
-            {selected && (
-              <aside className="details-panel">
-                <div className="details-header"><strong title={selected.name}>{selected.name}</strong><button type="button" onClick={() => setSelected(null)} aria-label="Close details panel">x</button></div>
-                <div className="details-preview">{selected.url && <img src={selected.url} alt={selected.name} />}</div>
-                <div className="details-actions">
-                  <button type="button" className="download-button" disabled={downloading} onClick={() => void downloadImage(selected)}>{downloading ? "Downloading..." : "Download"}</button>
-                  <a href={selected.url} target="_blank" rel="noreferrer">Open original</a>
-                </div>
-                <dl className="metadata">
-                  <div><dt>Filename</dt><dd>{selected.name}</dd></div>
-                  <div><dt>Collection</dt><dd>{selected.collection}</dd></div>
-                  <div><dt>Category</dt><dd>{selected.category}</dd></div>
-                  <div><dt>Folder</dt><dd>{selected.folder}</dd></div>
-                  <div><dt>File size</dt><dd>{formatBytes(selected.size)}</dd></div>
-                </dl>
-              </aside>
-            )}
-          </div>
-        )}
-      </main>
-    </div>
+            </div>
+          )}
+        </main>
+      </div>
+    </>
   );
 }
