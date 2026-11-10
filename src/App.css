@@ -333,14 +333,14 @@ select:focus-visible {
   width: 100%;
   height: 170px;
   overflow: hidden;
-  background: #deded9;
+  background: #f1f0ec;
 }
 
 .thumbnail img {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
 }
 
@@ -684,3 +684,5 @@ select:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+.thumbnail img { object-fit: contain; object-position: center; }
