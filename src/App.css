@@ -211,3 +211,14 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+.indexing-note {
+  margin-top: 12px;
+  padding: 10px;
+  color: #d8d8d8;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  background: #222;
+  border: 1px solid #444;
+  border-radius: 6px;
+}
