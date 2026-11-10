@@ -276,9 +276,22 @@ export default function App() {
     let completed = 0;
     let failures = 0;
 
-    const pageSnapshot = currentMetadata.map((image) => {
+    const pageSnapshot: DisplayImage[] = currentMetadata.map((image): DisplayImage => {
       const cached = loadedDisplayCache.current.get(image.path);
-      return cached ? { ...image, url: cached.url, failed: cached.failed } : { ...image };
+
+      if (cached) {
+        return {
+          ...image,
+          url: cached.url,
+          failed: cached.failed ?? false,
+        };
+      }
+
+      return {
+        ...image,
+        url: undefined,
+        failed: false,
+      };
     });
 
     setSelected(null);
