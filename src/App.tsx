@@ -2,451 +2,202 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getUrl, list } from "aws-amplify/storage";
 import "./App.css";
 
-type ArchiveImage = {
-  path: string;
-  name: string;
-  collection: string;
-  category: string;
-  folder: string;
-  size?: number;
-  lastModified?: Date;
-};
-
-type DisplayImage = ArchiveImage & { url: string };
-type CachedUrl = { url: string; expiresAt: number };
+type ArchiveImage = { path:string; name:string; collection:string; category:string; folder:string; size?:number; lastModified?:Date };
+type CachedUrl = { url:string; expiresAt:number };
+type PageImage = ArchiveImage & { url?:string; failed?:boolean };
 
 const ARCHIVE_PATH = "Key Manifest/";
-const S3_BUCKET = { bucketName: "manifest-inventory", region: "us-east-1" };
+const S3_BUCKET = { bucketName:"manifest-inventory", region:"us-east-1" };
 const PAGE_SIZE = 16;
-const URL_EXPIRATION_SECONDS = 3600;
-const URL_CACHE_SAFETY_MS = 60_000;
-const URL_REQUEST_CONCURRENCY = 8;
-const URL_REQUEST_TIMEOUT_MS = 15_000;
+const CONCURRENCY = 8;
+const URL_TTL_SECONDS = 3600;
+const URL_SAFETY_MS = 60000;
+const REQUEST_TIMEOUT_MS = 12000;
 const ALL_COLLECTIONS = "All collections";
 const ALL_CATEGORIES = "All categories";
 const UNCATEGORIZED = "Uncategorized";
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
 const BROWSER_IMAGE = /\.(avif|bmp|gif|jpe?g|png|webp)$/i;
 
-function getRelativeParts(path: string): string[] {
-  const relativePath = path.startsWith(ARCHIVE_PATH)
-    ? path.slice(ARCHIVE_PATH.length)
-    : path;
-  return relativePath.split("/").filter(Boolean);
+function relativeParts(path:string):string[] {
+  const value = path.startsWith(ARCHIVE_PATH) ? path.slice(ARCHIVE_PATH.length) : path;
+  return value.split("/").filter(Boolean);
 }
 
-function toArchiveImage(item: { path: string; size?: number; lastModified?: Date }): ArchiveImage {
-  const parts = getRelativeParts(item.path);
-  const folderParts = parts.slice(0, -1);
+function toArchiveImage(item:{path:string;size?:number;lastModified?:Date}):ArchiveImage {
+  const parts = relativeParts(item.path);
+  const folders = parts.slice(0,-1);
   return {
-    path: item.path,
-    name: parts.length > 0 ? parts[parts.length - 1] : item.path,
-    collection: folderParts[0] ?? UNCATEGORIZED,
-    category: folderParts[1] ?? UNCATEGORIZED,
-    folder: folderParts.length ? folderParts.join(" / ") : UNCATEGORIZED,
-    size: item.size,
-    lastModified: item.lastModified,
+    path:item.path,
+    name:parts.length ? parts[parts.length-1] : item.path,
+    collection:folders.length > 0 ? folders[0] : UNCATEGORIZED,
+    category:folders.length > 1 ? folders[1] : UNCATEGORIZED,
+    folder:folders.length ? folders.join(" / ") : UNCATEGORIZED,
+    size:item.size,
+    lastModified:item.lastModified,
   };
 }
 
-function formatBytes(bytes?: number): string {
+function formatBytes(bytes?:number):string {
   if (bytes === undefined) return "Unknown";
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1048576) return `${(bytes/1024).toFixed(1)} KB`;
+  return `${(bytes/1048576).toFixed(1)} MB`;
 }
 
-function canPreview(path: string): boolean {
-  return BROWSER_IMAGE.test(path);
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
-      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds.`));
-    }, timeoutMs);
-
+function withTimeout<T>(promise:Promise<T>, ms:number):Promise<T> {
+  return new Promise<T>((resolve,reject) => {
+    const timer = window.setTimeout(() => reject(new Error("Request timed out")), ms);
     promise.then(
-      (value) => {
-        window.clearTimeout(timeout);
-        resolve(value);
-      },
-      (reason) => {
-        window.clearTimeout(timeout);
-        reject(reason);
-      },
+      value => { window.clearTimeout(timer); resolve(value); },
+      error => { window.clearTimeout(timer); reject(error); },
     );
   });
 }
 
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  mapper: (item: T) => Promise<R>,
-): Promise<PromiseSettledResult<R>[]> {
-  const results: PromiseSettledResult<R>[] = new Array(items.length);
-  let nextIndex = 0;
-
-  async function worker(): Promise<void> {
-    while (nextIndex < items.length) {
-      const index = nextIndex++;
-      try {
-        results[index] = { status: "fulfilled", value: await mapper(items[index]) };
-      } catch (reason) {
-        results[index] = { status: "rejected", reason };
-      }
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
-  );
-  return results;
-}
-
 export default function App() {
-  const [images, setImages] = useState<ArchiveImage[]>([]);
-  const [pageImages, setPageImages] = useState<DisplayImage[]>([]);
-  const [search, setSearch] = useState("");
-  const [collection, setCollection] = useState(ALL_COLLECTIONS);
-  const [category, setCategory] = useState(ALL_CATEGORIES);
-  const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState<DisplayImage | null>(null);
-  const [loadingArchive, setLoadingArchive] = useState(true);
-  const [loadingPage, setLoadingPage] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [error, setError] = useState("");
-  const [warning, setWarning] = useState("");
+  const [images,setImages] = useState<ArchiveImage[]>([]);
+  const [pageImages,setPageImages] = useState<PageImage[]>([]);
+  const [search,setSearch] = useState("");
+  const [collection,setCollection] = useState(ALL_COLLECTIONS);
+  const [category,setCategory] = useState(ALL_CATEGORIES);
+  const [page,setPage] = useState(1);
+  const [selected,setSelected] = useState<PageImage|null>(null);
+  const [loadingArchive,setLoadingArchive] = useState(true);
+  const [loadingPage,setLoadingPage] = useState(false);
+  const [downloading,setDownloading] = useState(false);
+  const [error,setError] = useState("");
+  const [warning,setWarning] = useState("");
+  const cache = useRef<Map<string,CachedUrl>>(new Map());
+  const pending = useRef<Map<string,Promise<string>>>(new Map());
 
-  const urlCache = useRef<Map<string, CachedUrl>>(new Map());
-  const pendingUrlRequests = useRef<Map<string, Promise<string>>>(new Map());
-
-  async function getImageUrl(path: string): Promise<string> {
+  async function imageUrl(path:string):Promise<string> {
     const now = Date.now();
-    const cached = urlCache.current.get(path);
+    const hit = cache.current.get(path);
+    if (hit && hit.expiresAt > now + URL_SAFETY_MS) return hit.url;
+    if (hit) cache.current.delete(path);
+    const existing = pending.current.get(path);
+    if (existing) return existing;
 
-    if (cached && cached.expiresAt > now + URL_CACHE_SAFETY_MS) {
-      return cached.url;
-    }
-    if (cached) urlCache.current.delete(path);
-
-    const pending = pendingUrlRequests.current.get(path);
-    if (pending) return pending;
-
-    const request = withTimeout(
-      getUrl({
-        path,
-        options: { bucket: S3_BUCKET, expiresIn: URL_EXPIRATION_SECONDS },
-      }),
-      URL_REQUEST_TIMEOUT_MS,
-      `Signed URL request for ${path}`,
-    )
-      .then((result) => {
+    const request = withTimeout(getUrl({path,options:{bucket:S3_BUCKET,expiresIn:URL_TTL_SECONDS}}),REQUEST_TIMEOUT_MS)
+      .then(result => {
         const url = result.url.toString();
-        urlCache.current.set(path, {
-          url,
-          expiresAt: Date.now() + URL_EXPIRATION_SECONDS * 1000,
-        });
+        cache.current.set(path,{url,expiresAt:Date.now()+URL_TTL_SECONDS*1000});
         return url;
       })
-      .finally(() => pendingUrlRequests.current.delete(path));
-
-    pendingUrlRequests.current.set(path, request);
+      .finally(() => pending.current.delete(path));
+    pending.current.set(path,request);
     return request;
   }
 
   useEffect(() => {
     let active = true;
-
-    async function loadArchive(): Promise<void> {
+    (async () => {
       try {
-        setLoadingArchive(true);
-        setError("");
-        const result = await list({
-          path: ARCHIVE_PATH,
-          options: { listAll: true, bucket: S3_BUCKET },
-        });
-
-        const metadata = result.items
-          .filter((item) => IMAGE_FILE.test(item.path))
-          .map(toArchiveImage)
-          .sort((a, b) => {
-            const collectionOrder = a.collection.localeCompare(b.collection, undefined, {
-              numeric: true,
-              sensitivity: "base",
-            });
-            if (collectionOrder !== 0) return collectionOrder;
-            const categoryOrder = a.category.localeCompare(b.category, undefined, {
-              numeric: true,
-              sensitivity: "base",
-            });
-            if (categoryOrder !== 0) return categoryOrder;
-            return a.name.localeCompare(b.name, undefined, {
-              numeric: true,
-              sensitivity: "base",
-            });
-          });
-
-        if (active) setImages(metadata);
-      } catch (caughtError) {
-        console.error("Unable to load archive:", caughtError);
-        if (active) {
-          setError(
-            `Unable to load images from "${S3_BUCKET.bucketName}/${ARCHIVE_PATH}". Check the S3 prefix, bucket access, and Amplify Storage permissions.`,
-          );
-        }
-      } finally {
-        if (active) setLoadingArchive(false);
-      }
-    }
-
-    void loadArchive();
-    return () => { active = false; };
-  }, []);
-
-  const collections = useMemo(
-    () => Array.from(new Set(images.map((image) => image.collection))).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
-    ),
-    [images],
-  );
-
-  const categories = useMemo(() => {
-    const scoped = collection === ALL_COLLECTIONS
-      ? images
-      : images.filter((image) => image.collection === collection);
-    return Array.from(new Set(scoped.map((image) => image.category))).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
-    );
-  }, [images, collection]);
-
-  const filteredImages = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return images.filter((image) => {
-      if (collection !== ALL_COLLECTIONS && image.collection !== collection) return false;
-      if (category !== ALL_CATEGORIES && image.category !== category) return false;
-      if (!query) return true;
-      return [image.name, image.collection, image.category, image.folder, image.path]
-        .join(" ")
-        .toLowerCase()
-        .includes(query);
-    });
-  }, [images, search, collection, category]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredImages.length / PAGE_SIZE));
-
-  useEffect(() => {
-    setPage(1);
-    setSelected(null);
-  }, [search, collection, category]);
-
-  useEffect(() => {
-    setCategory(ALL_CATEGORIES);
-  }, [collection]);
-
-  useEffect(() => {
-    if (page > totalPages) setPage(totalPages);
-  }, [page, totalPages]);
-
-  const currentMetadata = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE;
-    return filteredImages.slice(start, start + PAGE_SIZE);
-  }, [filteredImages, page]);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadPage(): Promise<void> {
-      if (currentMetadata.length === 0) {
-        setPageImages([]);
-        setWarning("");
-        setLoadingPage(false);
-        return;
-      }
-
-      try {
-        setLoadingPage(true);
-        setWarning("");
-        setPageImages([]);
-
-        const results = await mapWithConcurrency(
-          currentMetadata,
-          URL_REQUEST_CONCURRENCY,
-          async (image): Promise<DisplayImage> => ({
-            ...image,
-            url: await getImageUrl(image.path),
-          }),
-        );
-
+        setLoadingArchive(true); setError("");
+        const result = await list({path:ARCHIVE_PATH,options:{listAll:true,bucket:S3_BUCKET}});
         if (!active) return;
+        setImages(result.items.filter(item => IMAGE_FILE.test(item.path)).map(toArchiveImage).sort((a,b) =>
+          a.collection.localeCompare(b.collection,undefined,{numeric:true,sensitivity:"base"}) ||
+          a.category.localeCompare(b.category,undefined,{numeric:true,sensitivity:"base"}) ||
+          a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:"base"})
+        ));
+      } catch (reason) {
+        console.error(reason);
+        if (active) setError(`Unable to load ${S3_BUCKET.bucketName}/${ARCHIVE_PATH}. Check access and Storage permissions.`);
+      } finally { if (active) setLoadingArchive(false); }
+    })();
+    return () => { active=false; };
+  },[]);
 
-        const loaded: DisplayImage[] = [];
-        let failures = 0;
-        for (const result of results) {
-          if (result.status === "fulfilled") loaded.push(result.value);
-          else {
-            failures += 1;
-            console.error("Image URL generation failed:", result.reason);
+  const collections = useMemo(() => Array.from(new Set(images.map(x=>x.collection))).sort(),[images]);
+  const categories = useMemo(() => Array.from(new Set((collection===ALL_COLLECTIONS?images:images.filter(x=>x.collection===collection)).map(x=>x.category))).sort(),[images,collection]);
+  const filtered = useMemo(() => {
+    const q=search.trim().toLowerCase();
+    return images.filter(x =>
+      (collection===ALL_COLLECTIONS || x.collection===collection) &&
+      (category===ALL_CATEGORIES || x.category===category) &&
+      (!q || [x.name,x.collection,x.category,x.folder,x.path].join(" ").toLowerCase().includes(q))
+    );
+  },[images,search,collection,category]);
+  const totalPages=Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));
+  const current=useMemo(() => filtered.slice((page-1)*PAGE_SIZE,page*PAGE_SIZE),[filtered,page]);
+
+  useEffect(() => { setPage(1); setSelected(null); },[search,collection,category]);
+  useEffect(() => { setCategory(ALL_CATEGORIES); },[collection]);
+  useEffect(() => { if(page>totalPages) setPage(totalPages); },[page,totalPages]);
+
+  useEffect(() => {
+    let active=true;
+    setSelected(null); setWarning("");
+    setPageImages(current.map(image=>({...image})));
+    if (!current.length) { setLoadingPage(false); return () => {active=false;}; }
+    setLoadingPage(true);
+    let next=0, completed=0, failures=0;
+
+    async function worker():Promise<void> {
+      while(active && next<current.length) {
+        const index=next++;
+        try {
+          const url=await imageUrl(current[index].path);
+          if(active) setPageImages(previous => previous.map((item,i)=>i===index?{...item,url}:item));
+        } catch(reason) {
+          failures++; console.error(reason);
+          if(active) setPageImages(previous => previous.map((item,i)=>i===index?{...item,failed:true}:item));
+        } finally {
+          completed++;
+          if(active && completed===current.length) {
+            setLoadingPage(false);
+            if(failures) setWarning(`${failures} image${failures===1?"":"s"} could not be loaded.`);
           }
         }
-
-        setPageImages(loaded);
-        if (failures > 0) {
-          setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
-        }
-      } catch (caughtError) {
-        console.error("Unable to load page:", caughtError);
-        if (active) setWarning("Unable to load the current page.");
-      } finally {
-        if (active) setLoadingPage(false);
       }
     }
+    void Promise.all(Array.from({length:Math.min(CONCURRENCY,current.length)},()=>worker()));
+    return () => { active=false; };
+  },[current]);
 
-    void loadPage();
-    return () => { active = false; };
-  }, [currentMetadata]);
-
-  function changePage(nextPage: number): void {
-    setPage(Math.max(1, Math.min(nextPage, totalPages)));
-    setSelected(null);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function clearFilters(): void {
-    setSearch("");
-    setCollection(ALL_COLLECTIONS);
-    setCategory(ALL_CATEGORIES);
-    setPage(1);
-    setSelected(null);
-  }
-
-  async function downloadImage(image: DisplayImage): Promise<void> {
+  async function downloadImage(image:PageImage):Promise<void> {
     try {
-      setDownloading(true);
-      setWarning("");
-      const freshUrl = await getImageUrl(image.path);
-      const response = await fetch(freshUrl);
-      if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = image.name || "archive-image";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-    } catch (caughtError) {
-      console.error("Unable to download image:", caughtError);
-      try {
-        window.open(await getImageUrl(image.path), "_blank", "noopener,noreferrer");
-        setWarning("Direct download was blocked, so the original image was opened instead.");
-      } catch (fallbackError) {
-        console.error("Unable to open original:", fallbackError);
-        setWarning("The image could not be downloaded or opened.");
-      }
-    } finally {
-      setDownloading(false);
-    }
+      setDownloading(true); setWarning("");
+      const response=await fetch(await imageUrl(image.path));
+      if(!response.ok) throw new Error(String(response.status));
+      const objectUrl=URL.createObjectURL(await response.blob());
+      const link=document.createElement("a"); link.href=objectUrl; link.download=image.name; document.body.appendChild(link); link.click(); link.remove();
+      window.setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);
+    } catch(reason) { console.error(reason); window.open(await imageUrl(image.path),"_blank","noopener,noreferrer"); }
+    finally { setDownloading(false); }
   }
 
-  const firstResult = filteredImages.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
-  const lastResult = Math.min(page * PAGE_SIZE, filteredImages.length);
+  function changePage(value:number):void { setPage(Math.max(1,Math.min(value,totalPages))); window.scrollTo({top:0,behavior:"smooth"}); }
+  function clearFilters():void { setSearch(""); setCollection(ALL_COLLECTIONS); setCategory(ALL_CATEGORIES); setPage(1); }
+  const first=filtered.length?(page-1)*PAGE_SIZE+1:0;
+  const last=Math.min(page*PAGE_SIZE,filtered.length);
 
-  return (
-    <div className="archive-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">ICP</div>
-          <div><strong>Image Archive</strong><span>Digital Collection</span></div>
-        </div>
-        <div className="static-filters">
-          <label htmlFor="archive-search">Search archive</label>
-          <input id="archive-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filename, folder, collection..." autoComplete="off" />
-          <label htmlFor="collection-filter">Collection</label>
-          <select id="collection-filter" value={collection} onChange={(event) => setCollection(event.target.value)}>
-            <option value={ALL_COLLECTIONS}>All collections</option>
-            {collections.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <label htmlFor="category-filter">Category</label>
-          <select id="category-filter" value={category} onChange={(event) => setCategory(event.target.value)}>
-            <option value={ALL_CATEGORIES}>All categories</option>
-            {categories.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <button type="button" className="clear-button" onClick={clearFilters}>Clear filters</button>
-          <div className="result-count"><span>Results</span><strong>{filteredImages.length.toLocaleString()}</strong></div>
-        </div>
-      </aside>
-
-      <main className="main-content">
-        <header className="top-header"><div><h1>Image Archive</h1><p>People. Photographs. A brighter tomorrow.</p></div></header>
-        {loadingArchive ? (
-          <div className="status"><div className="spinner" aria-hidden="true" /><strong>Loading archive...</strong></div>
-        ) : error ? (
-          <div className="status error"><strong>Archive unavailable</strong><p>{error}</p></div>
-        ) : (
-          <div className={selected ? "content-layout details-open" : "content-layout"}>
-            <section className="results-area">
-              <div className="results-toolbar">
-                <div className="results-summary"><strong>{filteredImages.length.toLocaleString()} results</strong>{filteredImages.length > 0 && <span>Showing {firstResult} to {lastResult}</span>}</div>
-                <nav className="pagination" aria-label="Archive pagination">
-                  <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1 || loadingPage}>Previous</button>
-                  <span>Page <strong>{page}</strong> of <strong>{totalPages}</strong></span>
-                  <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages || loadingPage}>Next</button>
-                </nav>
-              </div>
-
-              {warning && <div className="warning">{warning}</div>}
-              {filteredImages.length === 0 ? (
-                <div className="status"><strong>No images found</strong><p>Change the search, collection, or category.</p></div>
-              ) : loadingPage ? (
-                <div className="status"><div className="spinner" aria-hidden="true" /><strong>Loading page {page}...</strong></div>
-              ) : (
-                <div className="image-grid">
-                  {pageImages.map((image, index) => (
-                    <button key={image.path} type="button" className={selected?.path === image.path ? "image-card selected" : "image-card"} onClick={() => setSelected(image)}>
-                      <div className="thumbnail">
-                        {canPreview(image.path) ? (
-                          <img src={image.url} alt={image.name} loading={index < 4 ? "eager" : "lazy"} decoding="async" fetchPriority={index < 4 ? "high" : "auto"} />
-                        ) : <div className="no-preview">TIFF</div>}
-                      </div>
-                      <div className="card-details"><strong title={image.name}>{image.name}</strong><span>{image.collection}</span><span>{image.category}</span><small>{image.lastModified ? image.lastModified.toLocaleDateString() : "Date unavailable"}</small></div>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {filteredImages.length > 0 && (
-                <nav className="bottom-pagination" aria-label="Bottom pagination">
-                  <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1 || loadingPage}>Previous</button>
-                  <span>Page {page} of {totalPages}</span>
-                  <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages || loadingPage}>Next</button>
-                </nav>
-              )}
-            </section>
-
-            {selected && (
-              <aside className="details-panel">
-                <div className="details-header"><strong title={selected.name}>{selected.name}</strong><button type="button" onClick={() => setSelected(null)} aria-label="Close details panel">x</button></div>
-                <div className="details-preview">{canPreview(selected.path) ? <img src={selected.url} alt={selected.name} /> : <div className="no-preview">TIFF preview unavailable</div>}</div>
-                <div className="details-actions">
-                  <button type="button" className="download-button" onClick={() => void downloadImage(selected)} disabled={downloading}>{downloading ? "Downloading..." : "Download"}</button>
-                  <a href={selected.url} target="_blank" rel="noreferrer">Open original</a>
-                </div>
-                <dl className="metadata">
-                  <div><dt>Filename</dt><dd>{selected.name}</dd></div>
-                  <div><dt>Collection</dt><dd>{selected.collection}</dd></div>
-                  <div><dt>Category</dt><dd>{selected.category}</dd></div>
-                  <div><dt>Folder</dt><dd>{selected.folder}</dd></div>
-                  <div><dt>File size</dt><dd>{formatBytes(selected.size)}</dd></div>
-                  <div><dt>Modified</dt><dd>{selected.lastModified ? selected.lastModified.toLocaleDateString() : "Unavailable"}</dd></div>
-                </dl>
-              </aside>
-            )}
-          </div>
-        )}
-      </main>
-    </div>
-  );
+  return <div className="archive-shell">
+    <aside className="sidebar">
+      <div className="brand"><div className="brand-mark">ICP</div><div><strong>Image Archive</strong><span>Digital Collection</span></div></div>
+      <div className="static-filters">
+        <label htmlFor="archive-search">Search archive</label><input id="archive-search" type="search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Filename, folder, collection..." />
+        <label htmlFor="collection-filter">Collection</label><select id="collection-filter" value={collection} onChange={e=>setCollection(e.target.value)}><option>{ALL_COLLECTIONS}</option>{collections.map(value=><option key={value}>{value}</option>)}</select>
+        <label htmlFor="category-filter">Category</label><select id="category-filter" value={category} onChange={e=>setCategory(e.target.value)}><option>{ALL_CATEGORIES}</option>{categories.map(value=><option key={value}>{value}</option>)}</select>
+        <button className="clear-button" onClick={clearFilters}>Clear filters</button><div className="result-count"><span>Results</span><strong>{filtered.length.toLocaleString()}</strong></div>
+      </div>
+    </aside>
+    <main className="main-content">
+      <header className="top-header"><div><h1>Image Archive</h1><p>People. Photographs. A brighter tomorrow.</p></div></header>
+      {loadingArchive?<div className="status"><div className="spinner"/><strong>Loading archive...</strong></div>:error?<div className="status error"><strong>Archive unavailable</strong><p>{error}</p></div>:
+      <div className={selected?"content-layout details-open":"content-layout"}><section className="results-area">
+        <div className="results-toolbar"><div className="results-summary"><strong>{filtered.length.toLocaleString()} results</strong><span>Showing {first} to {last}</span></div><nav className="pagination"><button onClick={()=>changePage(page-1)} disabled={page===1}>Previous</button><span>Page <strong>{page}</strong> of <strong>{totalPages}</strong></span><button onClick={()=>changePage(page+1)} disabled={page===totalPages}>Next</button></nav></div>
+        {warning&&<div className="warning">{warning}</div>}
+        {!filtered.length?<div className="status"><strong>No images found</strong></div>:<div className="image-grid">{pageImages.map((image,index)=><button key={image.path} className={selected?.path===image.path?"image-card selected":"image-card"} onClick={()=>image.url&&setSelected(image)} disabled={!image.url}>
+          <div className="thumbnail">{image.url&&BROWSER_IMAGE.test(image.path)?<img src={image.url} alt={image.name} loading={index<4?"eager":"lazy"} decoding="async" fetchPriority={index<4?"high":"auto"}/>:image.failed?<div className="no-preview">Unavailable</div>:<div className="thumbnail-skeleton"/>}</div>
+          <div className="card-details"><strong>{image.name}</strong><span>{image.collection}</span><span>{image.category}</span><small>{image.lastModified?image.lastModified.toLocaleDateString():"Date unavailable"}</small></div>
+        </button>)}</div>}
+        <nav className="bottom-pagination"><button onClick={()=>changePage(page-1)} disabled={page===1}>Previous</button><span>{loadingPage?"Loading images...":`Page ${page} of ${totalPages}`}</span><button onClick={()=>changePage(page+1)} disabled={page===totalPages}>Next</button></nav>
+      </section>
+      {selected&&<aside className="details-panel"><div className="details-header"><strong>{selected.name}</strong><button onClick={()=>setSelected(null)}>x</button></div><div className="details-preview"><img src={selected.url} alt={selected.name}/></div><div className="details-actions"><button className="download-button" disabled={downloading} onClick={()=>void downloadImage(selected)}>{downloading?"Downloading...":"Download"}</button><a href={selected.url} target="_blank" rel="noreferrer">Open original</a></div><dl className="metadata"><div><dt>Filename</dt><dd>{selected.name}</dd></div><div><dt>Collection</dt><dd>{selected.collection}</dd></div><div><dt>Category</dt><dd>{selected.category}</dd></div><div><dt>Folder</dt><dd>{selected.folder}</dd></div><div><dt>File size</dt><dd>{formatBytes(selected.size)}</dd></div></dl></aside>}
+      </div>}
+    </main>
+  </div>;
 }
