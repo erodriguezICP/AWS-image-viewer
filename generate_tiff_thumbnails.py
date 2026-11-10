@@ -28,7 +28,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 TIFF_EXTENSIONS = (".tif", ".tiff")
 
-MAX_SOURCE_SIZE_MB = 250
+MAX_SOURCE_SIZE_MB = 200
 MAX_SOURCE_SIZE_BYTES = MAX_SOURCE_SIZE_MB * 1024 * 1024
 
 
