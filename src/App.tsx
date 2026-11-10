@@ -20,7 +20,8 @@ const S3_BUCKET = { bucketName: "manifest-inventory", region: "us-east-1" };
 const PAGE_SIZE = 16;
 const URL_EXPIRATION_SECONDS = 3600;
 const URL_CACHE_SAFETY_MS = 60_000;
-const URL_REQUEST_CONCURRENCY = 6;
+const URL_REQUEST_CONCURRENCY = 8;
+const URL_REQUEST_TIMEOUT_MS = 15_000;
 const ALL_COLLECTIONS = "All collections";
 const ALL_CATEGORIES = "All categories";
 const UNCATEGORIZED = "Uncategorized";
@@ -57,6 +58,25 @@ function formatBytes(bytes?: number): string {
 
 function canPreview(path: string): boolean {
   return BROWSER_IMAGE.test(path);
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds.`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeout);
+        resolve(value);
+      },
+      (reason) => {
+        window.clearTimeout(timeout);
+        reject(reason);
+      },
+    );
+  });
 }
 
 async function mapWithConcurrency<T, R>(
@@ -113,10 +133,14 @@ export default function App() {
     const pending = pendingUrlRequests.current.get(path);
     if (pending) return pending;
 
-    const request = getUrl({
-      path,
-      options: { bucket: S3_BUCKET, expiresIn: URL_EXPIRATION_SECONDS },
-    })
+    const request = withTimeout(
+      getUrl({
+        path,
+        options: { bucket: S3_BUCKET, expiresIn: URL_EXPIRATION_SECONDS },
+      }),
+      URL_REQUEST_TIMEOUT_MS,
+      `Signed URL request for ${path}`,
+    )
       .then((result) => {
         const url = result.url.toString();
         urlCache.current.set(path, {
