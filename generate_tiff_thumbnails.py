@@ -28,6 +28,9 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 TIFF_EXTENSIONS = (".tif", ".tiff")
 
+MAX_SOURCE_SIZE_MB = 250
+MAX_SOURCE_SIZE_BYTES = MAX_SOURCE_SIZE_MB * 1024 * 1024
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -97,9 +100,22 @@ def iter_tiff_keys(s3, settings: Settings) -> Iterable[str]:
         PaginationConfig={"PageSize": 1000},
     ):
         for item in page.get("Contents", []):
-            key = item["Key"]
-            if key.lower().endswith(TIFF_EXTENSIONS):
-                yield key
+    key = item["Key"]
+
+    if not key.lower().endswith(TIFF_EXTENSIONS):
+        continue
+
+    size = item.get("Size", 0)
+
+    if size > MAX_SOURCE_SIZE_BYTES:
+        logging.warning(
+            "Skipping oversized TIFF: %s (%.1f MB)",
+            key,
+            size / (1024 * 1024),
+        )
+        continue
+
+    yield key
 
 
 def destination_key(source_key: str, settings: Settings) -> str:
