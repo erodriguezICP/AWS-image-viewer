@@ -185,9 +185,8 @@ def convert_one(source_key: str, settings: Settings) -> tuple[str, str, str]:
             "ContentType": "image/jpeg",
             "CacheControl": "public, max-age=31536000, immutable",
             "Metadata": {
-                "source-key": source_key,
                 "thumbnail-generator": "generate_tiff_thumbnails.py",
-            },
+  },
         },
     )
     return "created", source_key, target_key
