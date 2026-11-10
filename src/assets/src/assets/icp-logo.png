@@ -1,0 +1,9 @@
+.brand-mark {
+  width: 220px;
+  height: 64px;
+  background-color: #ffffff;
+  background-image: url("./assets/icp-logo.png");
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: contain;
+}
