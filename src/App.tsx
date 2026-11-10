@@ -17,9 +17,10 @@ type CachedUrl = { url: string; expiresAt: number };
 
 const ARCHIVE_PATH = "Key Manifest/";
 const S3_BUCKET = { bucketName: "manifest-inventory", region: "us-east-1" };
-const PAGE_SIZE = 24;
+const PAGE_SIZE = 16;
 const URL_EXPIRATION_SECONDS = 3600;
 const URL_CACHE_SAFETY_MS = 60_000;
+const URL_REQUEST_CONCURRENCY = 6;
 const ALL_COLLECTIONS = "All collections";
 const ALL_CATEGORIES = "All categories";
 const UNCATEGORIZED = "Uncategorized";
@@ -38,10 +39,10 @@ function toArchiveImage(item: { path: string; size?: number; lastModified?: Date
   const folderParts = parts.slice(0, -1);
   return {
     path: item.path,
-    name: parts.length > 0 ? parts[parts.length - 1] : item.path,
-    collection: folderParts.length >= 1 ? folderParts[0] : UNCATEGORIZED,
-    category: folderParts.length >= 2 ? folderParts[1] : UNCATEGORIZED,
-    folder: folderParts.length > 0 ? folderParts.join(" / ") : UNCATEGORIZED,
+    name: parts.at(-1) ?? item.path,
+    collection: folderParts[0] ?? UNCATEGORIZED,
+    category: folderParts[1] ?? UNCATEGORIZED,
+    folder: folderParts.length ? folderParts.join(" / ") : UNCATEGORIZED,
     size: item.size,
     lastModified: item.lastModified,
   };
@@ -58,6 +59,31 @@ function canPreview(path: string): boolean {
   return BROWSER_IMAGE.test(path);
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      try {
+        results[index] = { status: "fulfilled", value: await mapper(items[index]) };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
+  );
+  return results;
+}
+
 export default function App() {
   const [images, setImages] = useState<ArchiveImage[]>([]);
   const [pageImages, setPageImages] = useState<DisplayImage[]>([]);
@@ -71,28 +97,43 @@ export default function App() {
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
+
   const urlCache = useRef<Map<string, CachedUrl>>(new Map());
+  const pendingUrlRequests = useRef<Map<string, Promise<string>>>(new Map());
 
   async function getImageUrl(path: string): Promise<string> {
     const now = Date.now();
     const cached = urlCache.current.get(path);
-    if (cached && cached.expiresAt > now + URL_CACHE_SAFETY_MS) return cached.url;
+
+    if (cached && cached.expiresAt > now + URL_CACHE_SAFETY_MS) {
+      return cached.url;
+    }
     if (cached) urlCache.current.delete(path);
 
-    const result = await getUrl({
+    const pending = pendingUrlRequests.current.get(path);
+    if (pending) return pending;
+
+    const request = getUrl({
       path,
       options: { bucket: S3_BUCKET, expiresIn: URL_EXPIRATION_SECONDS },
-    });
-    const url = result.url.toString();
-    urlCache.current.set(path, {
-      url,
-      expiresAt: now + URL_EXPIRATION_SECONDS * 1000,
-    });
-    return url;
+    })
+      .then((result) => {
+        const url = result.url.toString();
+        urlCache.current.set(path, {
+          url,
+          expiresAt: Date.now() + URL_EXPIRATION_SECONDS * 1000,
+        });
+        return url;
+      })
+      .finally(() => pendingUrlRequests.current.delete(path));
+
+    pendingUrlRequests.current.set(path, request);
+    return request;
   }
 
   useEffect(() => {
     let active = true;
+
     async function loadArchive(): Promise<void> {
       try {
         setLoadingArchive(true);
@@ -101,40 +142,56 @@ export default function App() {
           path: ARCHIVE_PATH,
           options: { listAll: true, bucket: S3_BUCKET },
         });
+
         const metadata = result.items
           .filter((item) => IMAGE_FILE.test(item.path))
           .map(toArchiveImage)
           .sort((a, b) => {
-            const collectionOrder = a.collection.localeCompare(b.collection, undefined, { numeric: true, sensitivity: "base" });
+            const collectionOrder = a.collection.localeCompare(b.collection, undefined, {
+              numeric: true,
+              sensitivity: "base",
+            });
             if (collectionOrder !== 0) return collectionOrder;
-            const categoryOrder = a.category.localeCompare(b.category, undefined, { numeric: true, sensitivity: "base" });
+            const categoryOrder = a.category.localeCompare(b.category, undefined, {
+              numeric: true,
+              sensitivity: "base",
+            });
             if (categoryOrder !== 0) return categoryOrder;
-            return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+            return a.name.localeCompare(b.name, undefined, {
+              numeric: true,
+              sensitivity: "base",
+            });
           });
+
         if (active) setImages(metadata);
       } catch (caughtError) {
         console.error("Unable to load archive:", caughtError);
         if (active) {
-          setError(`Unable to load images from "${S3_BUCKET.bucketName}/${ARCHIVE_PATH}". Check the S3 prefix, bucket access, and Amplify Storage permissions.`);
+          setError(
+            `Unable to load images from "${S3_BUCKET.bucketName}/${ARCHIVE_PATH}". Check the S3 prefix, bucket access, and Amplify Storage permissions.`,
+          );
         }
       } finally {
         if (active) setLoadingArchive(false);
       }
     }
+
     void loadArchive();
     return () => { active = false; };
   }, []);
 
-  const collections = useMemo(() =>
-    Array.from(new Set(images.map((image) => image.collection))).sort((a, b) =>
+  const collections = useMemo(
+    () => Array.from(new Set(images.map((image) => image.collection))).sort((a, b) =>
       a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
-    ), [images]);
+    ),
+    [images],
+  );
 
   const categories = useMemo(() => {
-    const scopedImages = collection === ALL_COLLECTIONS
+    const scoped = collection === ALL_COLLECTIONS
       ? images
       : images.filter((image) => image.collection === collection);
-    return Array.from(new Set(scopedImages.map((image) => image.category))).sort((a, b) =>
+    return Array.from(new Set(scoped.map((image) => image.category))).sort((a, b) =>
       a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
     );
   }, [images, collection]);
@@ -146,15 +203,26 @@ export default function App() {
       if (category !== ALL_CATEGORIES && image.category !== category) return false;
       if (!query) return true;
       return [image.name, image.collection, image.category, image.folder, image.path]
-        .join(" ").toLowerCase().includes(query);
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
     });
   }, [images, search, collection, category]);
 
   const totalPages = Math.max(1, Math.ceil(filteredImages.length / PAGE_SIZE));
 
-  useEffect(() => { setPage(1); setSelected(null); }, [search, collection, category]);
-  useEffect(() => { setCategory(ALL_CATEGORIES); }, [collection]);
-  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
+  useEffect(() => {
+    setPage(1);
+    setSelected(null);
+  }, [search, collection, category]);
+
+  useEffect(() => {
+    setCategory(ALL_CATEGORIES);
+  }, [collection]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const currentMetadata = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
@@ -163,6 +231,7 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
+
     async function loadPage(): Promise<void> {
       if (currentMetadata.length === 0) {
         setPageImages([]);
@@ -170,16 +239,23 @@ export default function App() {
         setLoadingPage(false);
         return;
       }
+
       try {
         setLoadingPage(true);
         setWarning("");
         setPageImages([]);
-        const results = await Promise.allSettled(
-          currentMetadata.map(async (image): Promise<DisplayImage> => ({
+
+        const results = await mapWithConcurrency(
+          currentMetadata,
+          URL_REQUEST_CONCURRENCY,
+          async (image): Promise<DisplayImage> => ({
             ...image,
             url: await getImageUrl(image.path),
-          })),
+          }),
         );
+
+        if (!active) return;
+
         const loaded: DisplayImage[] = [];
         let failures = 0;
         for (const result of results) {
@@ -189,7 +265,7 @@ export default function App() {
             console.error("Image URL generation failed:", result.reason);
           }
         }
-        if (!active) return;
+
         setPageImages(loaded);
         if (failures > 0) {
           setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
@@ -201,6 +277,7 @@ export default function App() {
         if (active) setLoadingPage(false);
       }
     }
+
     void loadPage();
     return () => { active = false; };
   }, [currentMetadata]);
@@ -226,6 +303,7 @@ export default function App() {
       const freshUrl = await getImageUrl(image.path);
       const response = await fetch(freshUrl);
       if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -238,8 +316,7 @@ export default function App() {
     } catch (caughtError) {
       console.error("Unable to download image:", caughtError);
       try {
-        const fallbackUrl = await getImageUrl(image.path);
-        window.open(fallbackUrl, "_blank", "noopener,noreferrer");
+        window.open(await getImageUrl(image.path), "_blank", "noopener,noreferrer");
         setWarning("Direct download was blocked, so the original image was opened instead.");
       } catch (fallbackError) {
         console.error("Unable to open original:", fallbackError);
@@ -295,6 +372,7 @@ export default function App() {
                   <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages || loadingPage}>Next</button>
                 </nav>
               </div>
+
               {warning && <div className="warning">{warning}</div>}
               {filteredImages.length === 0 ? (
                 <div className="status"><strong>No images found</strong><p>Change the search, collection, or category.</p></div>
@@ -302,14 +380,19 @@ export default function App() {
                 <div className="status"><div className="spinner" aria-hidden="true" /><strong>Loading page {page}...</strong></div>
               ) : (
                 <div className="image-grid">
-                  {pageImages.map((image) => (
+                  {pageImages.map((image, index) => (
                     <button key={image.path} type="button" className={selected?.path === image.path ? "image-card selected" : "image-card"} onClick={() => setSelected(image)}>
-                      <div className="thumbnail">{canPreview(image.path) ? <img src={image.url} alt={image.name} loading="lazy" decoding="async" /> : <div className="no-preview">TIFF</div>}</div>
+                      <div className="thumbnail">
+                        {canPreview(image.path) ? (
+                          <img src={image.url} alt={image.name} loading={index < 4 ? "eager" : "lazy"} decoding="async" fetchPriority={index < 4 ? "high" : "auto"} />
+                        ) : <div className="no-preview">TIFF</div>}
+                      </div>
                       <div className="card-details"><strong title={image.name}>{image.name}</strong><span>{image.collection}</span><span>{image.category}</span><small>{image.lastModified ? image.lastModified.toLocaleDateString() : "Date unavailable"}</small></div>
                     </button>
                   ))}
                 </div>
               )}
+
               {filteredImages.length > 0 && (
                 <nav className="bottom-pagination" aria-label="Bottom pagination">
                   <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1 || loadingPage}>Previous</button>
