@@ -13,11 +13,13 @@ type ArchiveImage = {
 };
 
 type DisplayImage = ArchiveImage & { url: string };
+type CachedUrl = { url: string; expiresAt: number };
 
 const ARCHIVE_PATH = "Key Manifest/";
 const S3_BUCKET = { bucketName: "manifest-inventory", region: "us-east-1" };
 const PAGE_SIZE = 24;
 const URL_EXPIRATION_SECONDS = 3600;
+const URL_CACHE_SAFETY_MS = 60_000;
 const ALL_COLLECTIONS = "All collections";
 const ALL_CATEGORIES = "All categories";
 const UNCATEGORIZED = "Uncategorized";
@@ -31,11 +33,7 @@ function getRelativeParts(path: string): string[] {
   return relativePath.split("/").filter(Boolean);
 }
 
-function toArchiveImage(item: {
-  path: string;
-  size?: number;
-  lastModified?: Date;
-}): ArchiveImage {
+function toArchiveImage(item: { path: string; size?: number; lastModified?: Date }): ArchiveImage {
   const parts = getRelativeParts(item.path);
   const folderParts = parts.slice(0, -1);
   return {
@@ -73,7 +71,25 @@ export default function App() {
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
-  const urlCache = useRef<Map<string, string>>(new Map());
+  const urlCache = useRef<Map<string, CachedUrl>>(new Map());
+
+  async function getImageUrl(path: string): Promise<string> {
+    const now = Date.now();
+    const cached = urlCache.current.get(path);
+    if (cached && cached.expiresAt > now + URL_CACHE_SAFETY_MS) return cached.url;
+    if (cached) urlCache.current.delete(path);
+
+    const result = await getUrl({
+      path,
+      options: { bucket: S3_BUCKET, expiresIn: URL_EXPIRATION_SECONDS },
+    });
+    const url = result.url.toString();
+    urlCache.current.set(path, {
+      url,
+      expiresAt: now + URL_EXPIRATION_SECONDS * 1000,
+    });
+    return url;
+  }
 
   useEffect(() => {
     let active = true;
@@ -98,7 +114,9 @@ export default function App() {
         if (active) setImages(metadata);
       } catch (caughtError) {
         console.error("Unable to load archive:", caughtError);
-        if (active) setError(`Unable to load images from "${ARCHIVE_PATH}". Check the S3 prefix and Amplify Storage permissions.`);
+        if (active) {
+          setError(`Unable to load images from "${S3_BUCKET.bucketName}/${ARCHIVE_PATH}". Check the S3 prefix, bucket access, and Amplify Storage permissions.`);
+        }
       } finally {
         if (active) setLoadingArchive(false);
       }
@@ -149,33 +167,32 @@ export default function App() {
       if (currentMetadata.length === 0) {
         setPageImages([]);
         setWarning("");
+        setLoadingPage(false);
         return;
       }
       try {
         setLoadingPage(true);
         setWarning("");
+        setPageImages([]);
         const results = await Promise.allSettled(
-          currentMetadata.map(async (image): Promise<DisplayImage> => {
-            const cachedUrl = urlCache.current.get(image.path);
-            if (cachedUrl) return { ...image, url: cachedUrl };
-            const result = await getUrl({
-              path: image.path,
-              options: { bucket: S3_BUCKET, expiresIn: URL_EXPIRATION_SECONDS },
-            });
-            const url = result.url.toString();
-            urlCache.current.set(image.path, url);
-            return { ...image, url };
-          }),
+          currentMetadata.map(async (image): Promise<DisplayImage> => ({
+            ...image,
+            url: await getImageUrl(image.path),
+          })),
         );
         const loaded: DisplayImage[] = [];
         let failures = 0;
         for (const result of results) {
           if (result.status === "fulfilled") loaded.push(result.value);
-          else failures += 1;
+          else {
+            failures += 1;
+            console.error("Image URL generation failed:", result.reason);
+          }
         }
-        if (active) {
-          setPageImages(loaded);
-          if (failures > 0) setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
+        if (!active) return;
+        setPageImages(loaded);
+        if (failures > 0) {
+          setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
         }
       } catch (caughtError) {
         console.error("Unable to load page:", caughtError);
@@ -206,7 +223,8 @@ export default function App() {
     try {
       setDownloading(true);
       setWarning("");
-      const response = await fetch(image.url);
+      const freshUrl = await getImageUrl(image.path);
+      const response = await fetch(freshUrl);
       if (!response.ok) throw new Error(`Download failed: ${response.status}`);
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
@@ -216,11 +234,17 @@ export default function App() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(objectUrl);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     } catch (caughtError) {
       console.error("Unable to download image:", caughtError);
-      window.open(image.url, "_blank", "noopener,noreferrer");
-      setWarning("Direct download was blocked, so the original image was opened instead.");
+      try {
+        const fallbackUrl = await getImageUrl(image.path);
+        window.open(fallbackUrl, "_blank", "noopener,noreferrer");
+        setWarning("Direct download was blocked, so the original image was opened instead.");
+      } catch (fallbackError) {
+        console.error("Unable to open original:", fallbackError);
+        setWarning("The image could not be downloaded or opened.");
+      }
     } finally {
       setDownloading(false);
     }
@@ -297,7 +321,7 @@ export default function App() {
 
             {selected && (
               <aside className="details-panel">
-                <div className="details-header"><strong title={selected.name}>{selected.name}</strong><button type="button" onClick={() => setSelected(null)} aria-label="Close details panel">×</button></div>
+                <div className="details-header"><strong title={selected.name}>{selected.name}</strong><button type="button" onClick={() => setSelected(null)} aria-label="Close details panel">x</button></div>
                 <div className="details-preview">{canPreview(selected.path) ? <img src={selected.url} alt={selected.name} /> : <div className="no-preview">TIFF preview unavailable</div>}</div>
                 <div className="details-actions">
                   <button type="button" className="download-button" onClick={() => void downloadImage(selected)} disabled={downloading}>{downloading ? "Downloading..." : "Download"}</button>
