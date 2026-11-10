@@ -39,7 +39,7 @@ function toArchiveImage(item: { path: string; size?: number; lastModified?: Date
   const folderParts = parts.slice(0, -1);
   return {
     path: item.path,
-    name: parts.at(-1) ?? item.path,
+    name: parts.length > 0 ? parts[parts.length - 1] : item.path,
     collection: folderParts[0] ?? UNCATEGORIZED,
     category: folderParts[1] ?? UNCATEGORIZED,
     folder: folderParts.length ? folderParts.join(" / ") : UNCATEGORIZED,
