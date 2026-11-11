@@ -1,285 +1,542 @@
 #!/usr/bin/env python3
-"""Generate JPEG derivatives for TIFFs in S3, skipping oversized sources.
-
-Defaults:
-  Bucket: manifest-inventory
-  Source: Key Manifest/
-  Destination: Key Manifest Thumbnails/
-  Skip sources larger than: 200 MB
-
-Original TIFF files are never modified or deleted.
-"""
-
-from __future__ import annotations
 
 import argparse
 import io
 import logging
 import os
 import sys
-import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Iterable
 
 import boto3
-from botocore.config import Config
 from botocore.exceptions import ClientError
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps
+
+
+# ------------------------------------------------------------
+# DEFAULT CONFIGURATION
+# ------------------------------------------------------------
+
+DEFAULT_BUCKET = "manifest-inventory"
+
+DEFAULT_SOURCE_PREFIX = "Key Manifest/"
+
+DEFAULT_DEST_PREFIX = "Key Manifest Thumbnails/"
 
 TIFF_EXTENSIONS = (".tif", ".tiff")
-DEFAULT_MAX_SOURCE_MB = 250
+
+JPEG_QUALITY = 85
+
+THUMBNAIL_MAX_SIZE = 1200
+
+DEFAULT_WORKERS = 4
 
 
-@dataclass(frozen=True)
-class SourceObject:
-    key: str
-    size: int
+# ------------------------------------------------------------
+# IMPORTANT:
+# Protect CloudShell from very large TIFF files.
+#
+# Files larger than this are SKIPPED BEFORE THEY ARE DOWNLOADED.
+# ------------------------------------------------------------
+
+MAX_SOURCE_SIZE_MB = 200
+MAX_SOURCE_SIZE_BYTES = MAX_SOURCE_SIZE_MB * 1024 * 1024
 
 
 @dataclass(frozen=True)
 class Settings:
     bucket: str
     source_prefix: str
-    destination_prefix: str
-    max_dimension: int
-    quality: int
+    dest_prefix: str
     workers: int
-    max_source_bytes: int
-    overwrite: bool
-    dry_run: bool
+    max_source_mb: int
+    dry_run: bool = False
+
+    @property
+    def max_source_bytes(self) -> int:
+        return self.max_source_mb * 1024 * 1024
 
 
-def parse_args() -> Settings:
-    parser = argparse.ArgumentParser(
-        description="Create JPEG thumbnails for TIFF files in S3 and skip oversized sources."
-    )
-    parser.add_argument("--bucket", default="manifest-inventory")
-    parser.add_argument("--source-prefix", default="Key Manifest/")
-    parser.add_argument("--destination-prefix", default="Key Manifest Thumbnails/")
-    parser.add_argument("--max-dimension", type=int, default=1200)
-    parser.add_argument("--quality", type=int, default=82)
-    parser.add_argument("--workers", type=int, default=4)
-    parser.add_argument("--max-source-mb", type=int, default=DEFAULT_MAX_SOURCE_MB)
-    parser.add_argument("--overwrite", action="store_true")
-    parser.add_argument("--dry-run", action="store_true")
-    args = parser.parse_args()
+# ------------------------------------------------------------
+# LOGGING
+# ------------------------------------------------------------
 
-    if not 1 <= args.quality <= 95:
-        parser.error("--quality must be between 1 and 95")
-    if args.max_dimension < 100:
-        parser.error("--max-dimension must be at least 100")
-    if not 1 <= args.workers <= 16:
-        parser.error("--workers must be between 1 and 16")
-    if args.max_source_mb < 1:
-        parser.error("--max-source-mb must be at least 1")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 
-    return Settings(
-        bucket=args.bucket,
-        source_prefix=args.source_prefix.strip("/") + "/",
-        destination_prefix=args.destination_prefix.strip("/") + "/",
-        max_dimension=args.max_dimension,
-        quality=args.quality,
-        workers=args.workers,
-        max_source_bytes=args.max_source_mb * 1024 * 1024,
-        overwrite=args.overwrite,
-        dry_run=args.dry_run,
-    )
+logger = logging.getLogger(__name__)
 
 
-def make_s3_client():
-    return boto3.client(
-        "s3",
-        config=Config(
-            retries={"max_attempts": 8, "mode": "adaptive"},
-            max_pool_connections=32,
-            connect_timeout=20,
-            read_timeout=120,
-        ),
-    )
+# ------------------------------------------------------------
+# S3 HELPERS
+# ------------------------------------------------------------
+
+def normalize_prefix(prefix: str) -> str:
+    if prefix and not prefix.endswith("/"):
+        return prefix + "/"
+    return prefix
 
 
-def scan_tiffs(s3, settings: Settings) -> tuple[list[SourceObject], int, int]:
-    eligible: list[SourceObject] = []
-    skipped_large = 0
-    total_tiffs = 0
+def destination_key(source_key: str, settings: Settings) -> str:
+    """
+    Convert:
+
+        Key Manifest/folder/image.tif
+
+    into:
+
+        Key Manifest Thumbnails/folder/image.jpg
+    """
+
+    source_prefix = normalize_prefix(settings.source_prefix)
+    dest_prefix = normalize_prefix(settings.dest_prefix)
+
+    if source_key.startswith(source_prefix):
+        relative = source_key[len(source_prefix):]
+    else:
+        relative = source_key
+
+    root, _ = os.path.splitext(relative)
+
+    return f"{dest_prefix}{root}.jpg"
+
+
+def object_exists(s3, bucket: str, key: str) -> bool:
+    try:
+        s3.head_object(
+            Bucket=bucket,
+            Key=key,
+        )
+        return True
+
+    except ClientError as exc:
+        error_code = exc.response.get(
+            "Error", {}
+        ).get(
+            "Code", ""
+        )
+
+        if error_code in (
+            "404",
+            "NoSuchKey",
+            "NotFound",
+        ):
+            return False
+
+        raise
+
+
+# ------------------------------------------------------------
+# TIFF DISCOVERY
+# ------------------------------------------------------------
+
+def iter_tiff_keys(
+    s3,
+    settings: Settings,
+) -> Iterable[str]:
+    """
+    Enumerate TIFF objects.
+
+    CRITICAL:
+    Oversized files are filtered here, before workers download
+    them or Pillow attempts to decompress them.
+    """
+
     paginator = s3.get_paginator("list_objects_v2")
 
     for page in paginator.paginate(
         Bucket=settings.bucket,
         Prefix=settings.source_prefix,
-        PaginationConfig={"PageSize": 1000},
+        PaginationConfig={
+            "PageSize": 1000,
+        },
     ):
+
         for item in page.get("Contents", []):
+
             key = item["Key"]
+
             if not key.lower().endswith(TIFF_EXTENSIONS):
                 continue
 
-            total_tiffs += 1
-            size = int(item.get("Size", 0))
+            # ------------------------------------------------
+            # LARGE-TIFF PROTECTION
+            # ------------------------------------------------
+
+            size = item.get("Size", 0)
 
             if size > settings.max_source_bytes:
-                skipped_large += 1
-                logging.warning(
-                    "SKIP TOO LARGE: %s (%.1f MB > %.1f MB limit)",
+
+                logger.warning(
+                    "Skipping oversized TIFF: %s (%.1f MB > %d MB limit)",
                     key,
                     size / (1024 * 1024),
-                    settings.max_source_bytes / (1024 * 1024),
+                    settings.max_source_mb,
                 )
+
                 continue
 
-            eligible.append(SourceObject(key=key, size=size))
-
-    return eligible, total_tiffs, skipped_large
+            yield key
 
 
-def destination_key(source_key: str, settings: Settings) -> str:
-    relative = source_key[len(settings.source_prefix):]
-    base, _ = os.path.splitext(relative)
-    return f"{settings.destination_prefix}{base}.jpg"
+# ------------------------------------------------------------
+# CONVERSION
+# ------------------------------------------------------------
 
+def convert_tiff_to_jpeg(
+    s3,
+    source_key: str,
+    settings: Settings,
+):
+    """
+    Download TIFF into memory, resize it and upload a JPEG
+    derivative.
+    """
 
-def object_exists(s3, bucket: str, key: str) -> bool:
-    try:
-        s3.head_object(Bucket=bucket, Key=key)
-        return True
-    except ClientError as error:
-        code = error.response.get("Error", {}).get("Code")
-        if code in {"404", "NoSuchKey", "NotFound"}:
-            return False
-        raise
+    target_key = destination_key(
+        source_key,
+        settings,
+    )
 
+    # --------------------------------------------------------
+    # Don't recreate thumbnails that already exist
+    # --------------------------------------------------------
 
-def flatten_to_rgb(image: Image.Image) -> Image.Image:
-    image = ImageOps.exif_transpose(image)
-    if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
-        rgba = image.convert("RGBA")
-        background = Image.new("RGB", rgba.size, "white")
-        background.paste(rgba, mask=rgba.getchannel("A"))
-        return background
-    return image.convert("RGB")
-
-
-def convert_one(source: SourceObject, settings: Settings) -> tuple[str, str, str]:
-    s3 = make_s3_client()
-    target_key = destination_key(source.key, settings)
-
-    if not settings.overwrite and object_exists(s3, settings.bucket, target_key):
-        return "skipped_existing", source.key, target_key
-
-    if settings.dry_run:
-        return "planned", source.key, target_key
-
-    with tempfile.NamedTemporaryFile(suffix=".tif") as source_file:
-        s3.download_fileobj(settings.bucket, source.key, source_file)
-        source_file.flush()
-
-        try:
-            with Image.open(source_file.name) as image:
-                image.seek(0)
-                rgb = flatten_to_rgb(image)
-                rgb.thumbnail(
-                    (settings.max_dimension, settings.max_dimension),
-                    Image.Resampling.LANCZOS,
-                )
-
-                output = io.BytesIO()
-                rgb.save(
-                    output,
-                    format="JPEG",
-                    quality=settings.quality,
-                    optimize=True,
-                    progressive=True,
-                    subsampling="4:2:0",
-                )
-                output.seek(0)
-        except (UnidentifiedImageError, OSError) as error:
-            raise RuntimeError(f"Pillow could not decode {source.key}: {error}") from error
-
-    # Keep custom metadata ASCII-only. The Unicode source path is already encoded
-    # in the destination object key, so it does not need to be repeated in Metadata.
-    s3.upload_fileobj(
-        output,
+    if object_exists(
+        s3,
         settings.bucket,
         target_key,
-        ExtraArgs={
-            "ContentType": "image/jpeg",
-            "CacheControl": "public, max-age=31536000, immutable",
-            "Metadata": {
-                "thumbnail-generator": "generate-tiff-thumbnails",
-            },
-        },
+    ):
+
+        return (
+            "skipped",
+            source_key,
+            target_key,
+        )
+
+    if settings.dry_run:
+
+        return (
+            "planned",
+            source_key,
+            target_key,
+        )
+
+    try:
+
+        response = s3.get_object(
+            Bucket=settings.bucket,
+            Key=source_key,
+        )
+
+        source_bytes = response["Body"].read()
+
+        with Image.open(
+            io.BytesIO(source_bytes)
+        ) as image:
+
+            # Apply EXIF orientation if present
+            image = ImageOps.exif_transpose(image)
+
+            # ------------------------------------------------
+            # TIFFs can have modes JPEG doesn't support.
+            # Convert them safely to RGB.
+            # ------------------------------------------------
+
+            if image.mode not in (
+                "RGB",
+                "L",
+            ):
+                image = image.convert("RGB")
+
+            elif image.mode == "L":
+                image = image.convert("RGB")
+
+            # ------------------------------------------------
+            # Resize while keeping aspect ratio
+            # ------------------------------------------------
+
+            image.thumbnail(
+                (
+                    THUMBNAIL_MAX_SIZE,
+                    THUMBNAIL_MAX_SIZE,
+                ),
+                Image.Resampling.LANCZOS,
+            )
+
+            output = io.BytesIO()
+
+            image.save(
+                output,
+                format="JPEG",
+                quality=JPEG_QUALITY,
+                optimize=True,
+            )
+
+            output.seek(0)
+
+        # Release the original TIFF bytes before upload
+        del source_bytes
+
+        s3.put_object(
+            Bucket=settings.bucket,
+            Key=target_key,
+            Body=output.getvalue(),
+            ContentType="image/jpeg",
+            CacheControl="public, max-age=31536000",
+        )
+
+        output.close()
+
+        return (
+            "created",
+            source_key,
+            target_key,
+        )
+
+    except Exception as exc:
+
+        logger.exception(
+            "Failed converting %s: %s",
+            source_key,
+            exc,
+        )
+
+        return (
+            "failed",
+            source_key,
+            target_key,
+        )
+
+
+# ------------------------------------------------------------
+# COMMAND-LINE ARGUMENTS
+# ------------------------------------------------------------
+
+def parse_args():
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generate JPG thumbnails from TIFF files stored in S3."
+        )
     )
 
-    return "created", source.key, target_key
-
-
-def main() -> int:
-    settings = parse_args()
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
+    parser.add_argument(
+        "--bucket",
+        default=DEFAULT_BUCKET,
+        help="S3 bucket name",
     )
 
-    limit_mb = settings.max_source_bytes / (1024 * 1024)
-    logging.info("Maximum TIFF source size: %.0f MB", limit_mb)
-
-    s3 = make_s3_client()
-    eligible, total_tiffs, skipped_large = scan_tiffs(s3, settings)
-
-    logging.info(
-        "Scan complete. TIFFs=%s eligible=%s skipped_too_large=%s",
-        total_tiffs,
-        len(eligible),
-        skipped_large,
+    parser.add_argument(
+        "--source-prefix",
+        default=DEFAULT_SOURCE_PREFIX,
+        help="S3 TIFF source prefix",
     )
 
-    counts = {
+    parser.add_argument(
+        "--dest-prefix",
+        default=DEFAULT_DEST_PREFIX,
+        help="S3 JPEG destination prefix",
+    )
+
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help="Number of concurrent conversion workers",
+    )
+
+    parser.add_argument(
+        "--max-source-mb",
+        type=int,
+        default=MAX_SOURCE_SIZE_MB,
+        help=(
+            "Skip TIFF files larger than this many MB "
+            f"(default: {MAX_SOURCE_SIZE_MB})"
+        ),
+    )
+
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be converted without creating files",
+    )
+
+    return parser.parse_args()
+
+
+# ------------------------------------------------------------
+# MAIN JOB
+# ------------------------------------------------------------
+
+def main():
+
+    args = parse_args()
+
+    settings = Settings(
+        bucket=args.bucket,
+        source_prefix=normalize_prefix(
+            args.source_prefix
+        ),
+        dest_prefix=normalize_prefix(
+            args.dest_prefix
+        ),
+        workers=max(1, args.workers),
+        max_source_mb=max(
+            1,
+            args.max_source_mb,
+        ),
+        dry_run=args.dry_run,
+    )
+
+    logger.info(
+        "Bucket: %s",
+        settings.bucket,
+    )
+
+    logger.info(
+        "Source: %s",
+        settings.source_prefix,
+    )
+
+    logger.info(
+        "Destination: %s",
+        settings.dest_prefix,
+    )
+
+    logger.info(
+        "Workers: %d",
+        settings.workers,
+    )
+
+    logger.info(
+        "Maximum TIFF size: %d MB",
+        settings.max_source_mb,
+    )
+
+    if settings.dry_run:
+        logger.info(
+            "DRY RUN - no JPEGs will be created"
+        )
+
+    s3 = boto3.client("s3")
+
+    # --------------------------------------------------------
+    # Enumerate acceptable TIFFs.
+    #
+    # Files larger than max_source_mb are discarded HERE.
+    # They never reach Pillow.
+    # --------------------------------------------------------
+
+    tiff_keys = list(
+        iter_tiff_keys(
+            s3,
+            settings,
+        )
+    )
+
+    total = len(tiff_keys)
+
+    logger.info(
+        "TIFF files eligible for processing: %d",
+        total,
+    )
+
+    if total == 0:
+
+        logger.info(
+            "Nothing to process."
+        )
+
+        return 0
+
+    counters = {
         "created": 0,
-        "skipped_existing": 0,
+        "skipped": 0,
         "planned": 0,
         "failed": 0,
     }
 
-    with ThreadPoolExecutor(max_workers=settings.workers) as executor:
+    # --------------------------------------------------------
+    # Run conversions concurrently
+    # --------------------------------------------------------
+
+    with ThreadPoolExecutor(
+        max_workers=settings.workers
+    ) as executor:
+
         futures = {
-            executor.submit(convert_one, source, settings): source
-            for source in eligible
+            executor.submit(
+                convert_tiff_to_jpeg,
+                s3,
+                key,
+                settings,
+            ): key
+            for key in tiff_keys
         }
 
-        for completed, future in enumerate(as_completed(futures), start=1):
-            source = futures[future]
+        completed = 0
+
+        for future in as_completed(futures):
+
+            completed += 1
+
+            source_key = futures[future]
+
             try:
-                status, source_key, target_key = future.result()
-                counts[status] += 1
-                logging.info(
-                    "[%s/%s] %s: %s -> %s",
-                    completed,
-                    len(eligible),
+
+                (
                     status,
-                    source_key,
-                    target_key,
-                )
-            except Exception as error:
-                counts["failed"] += 1
-                logging.error(
-                    "[%s/%s] failed: %s: %s",
+                    source,
+                    target,
+                ) = future.result()
+
+            except Exception:
+
+                counters["failed"] += 1
+
+        ger.exception(
+                    "[%d/%d] failed: %s",
                     completed,
-                    len(eligible),
-                    source.key,
-                    error,
+                    total,
+                    source_key,
                 )
 
-    logging.info(
-        "Complete. created=%s skipped_existing=%s skipped_too_large=%s planned=%s failed=%s",
-        counts["created"],
-        counts["skipped_existing"],
-        skipped_large,
-        counts["planned"],
-        counts["failed"],
+                continue
+
+            counters[status] += 1
+
+            logger.info(
+                "[%d/%d] %s: %s -> %s",
+                completed,
+                total,
+                status,
+                source,
+                target,
+            )
+
+    logger.info(
+        (
+            "Complete. "
+            "created=%d "
+            "skipped=%d "
+            "planned=%d "
+            "failed=%d"
+        ),
+        counters["created"],
+        counters["skipped"],
+        counters["planned"],
+        counters["failed"],
     )
 
-    return 1 if counts["failed"] else 0
+    return (
+        1
+        if counters["failed"]
+        else 0
+    )
 
 
 if __name__ == "__main__":
