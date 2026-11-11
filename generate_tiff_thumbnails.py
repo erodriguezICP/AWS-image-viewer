@@ -494,11 +494,11 @@ def main():
                     target,
                 ) = future.result()
 
-            except Exception:
+                    except Exception:
 
                 counters["failed"] += 1
 
-        ger.exception(
+                logger.exception(
                     "[%d/%d] failed: %s",
                     completed,
                     total,
@@ -506,6 +506,7 @@ def main():
                 )
 
                 continue
+
 
             counters[status] += 1
 
