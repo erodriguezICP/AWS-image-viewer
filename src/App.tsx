@@ -13,11 +13,7 @@ type ArchiveImage = {
   lastModified?: Date;
 };
 
-type DisplayImage = ArchiveImage & {
-  url?: string;
-  failed?: boolean;
-};
-
+type DisplayImage = ArchiveImage & { url?: string; failed?: boolean };
 type CachedUrl = { url: string; expiresAt: number };
 
 const ARCHIVE_PATH = "Key Manifest/";
@@ -34,29 +30,36 @@ const ALL_CATEGORIES = "All categories";
 const UNCATEGORIZED = "Uncategorized";
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
 const TIFF_IMAGE = /\.tiff?$/i;
-const JPEG_IMAGE = /\.jpe?g$/i;
 
 function relativeParts(path: string): string[] {
-  const relative = path.startsWith(ARCHIVE_PATH) ? path.slice(ARCHIVE_PATH.length) : path;
+  const relative = path.startsWith(ARCHIVE_PATH)
+    ? path.slice(ARCHIVE_PATH.length)
+    : path;
   return relative.split("/").filter(Boolean);
 }
 
 function thumbnailPathFor(path: string): string {
   if (!TIFF_IMAGE.test(path)) return path;
-  const relative = path.startsWith(ARCHIVE_PATH) ? path.slice(ARCHIVE_PATH.length) : path;
+  const relative = path.startsWith(ARCHIVE_PATH)
+    ? path.slice(ARCHIVE_PATH.length)
+    : path;
   return `${THUMBNAIL_PATH}${relative.replace(/\.tiff?$/i, ".jpg")}`;
 }
 
-function toArchiveImage(item: { path: string; size?: number; lastModified?: Date }): ArchiveImage {
+function toArchiveImage(item: {
+  path: string;
+  size?: number;
+  lastModified?: Date;
+}): ArchiveImage {
   const parts = relativeParts(item.path);
   const folders = parts.slice(0, -1);
   return {
     path: item.path,
     thumbnailPath: thumbnailPathFor(item.path),
-    name: parts.length ? parts[parts.length - 1] : item.path,
+    name: parts.length > 0 ? parts[parts.length - 1] : item.path,
     collection: folders[0] ?? UNCATEGORIZED,
     category: folders[1] ?? UNCATEGORIZED,
-    folder: folders.length ? folders.join(" / ") : UNCATEGORIZED,
+    folder: folders.length > 0 ? folders.join(" / ") : UNCATEGORIZED,
     size: item.size,
     lastModified: item.lastModified,
   };
@@ -71,7 +74,10 @@ function formatBytes(bytes?: number): string {
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error("Request timed out")), timeoutMs);
+    const timer = window.setTimeout(
+      () => reject(new Error(`Request timed out after ${timeoutMs / 1000} seconds.`)),
+      timeoutMs,
+    );
     promise.then(
       (value) => { window.clearTimeout(timer); resolve(value); },
       (reason) => { window.clearTimeout(timer); reject(reason); },
@@ -108,13 +114,21 @@ export default function App() {
     if (pending) return pending;
 
     const request = withTimeout(
-      getUrl({ path, options: { bucket: S3_BUCKET, expiresIn: URL_EXPIRATION_SECONDS } }),
+      getUrl({
+        path,
+        options: { bucket: S3_BUCKET, expiresIn: URL_EXPIRATION_SECONDS },
+      }),
       URL_TIMEOUT_MS,
-    ).then((result) => {
-      const url = result.url.toString();
-      urlCache.current.set(path, { url, expiresAt: Date.now() + URL_EXPIRATION_SECONDS * 1000 });
-      return url;
-    }).finally(() => pendingUrls.current.delete(path));
+    )
+      .then((result) => {
+        const url = result.url.toString();
+        urlCache.current.set(path, {
+          url,
+          expiresAt: Date.now() + URL_EXPIRATION_SECONDS * 1000,
+        });
+        return url;
+      })
+      .finally(() => pendingUrls.current.delete(path));
 
     pendingUrls.current.set(path, request);
     return request;
@@ -122,20 +136,31 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    (async () => {
+
+    async function indexArchive(): Promise<void> {
       let nextToken: string | undefined;
       let firstBatch = true;
+
       try {
         setError("");
         do {
           const result = await list({
             path: ARCHIVE_PATH,
-            options: { bucket: S3_BUCKET, pageSize: METADATA_BATCH_SIZE, nextToken },
+            options: {
+              bucket: S3_BUCKET,
+              pageSize: METADATA_BATCH_SIZE,
+              nextToken,
+            },
           });
           if (!active) return;
-          const batch = result.items.filter((item) => IMAGE_FILE.test(item.path)).map(toArchiveImage);
+
+          const batch = result.items
+            .filter((item) => IMAGE_FILE.test(item.path))
+            .map(toArchiveImage);
+
           setImages((previous) => [...previous, ...batch]);
           nextToken = result.nextToken;
+
           if (firstBatch) {
             firstBatch = false;
             setLoadingInitial(false);
@@ -143,14 +168,19 @@ export default function App() {
           }
           await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
         } while (active && nextToken);
+
         if (active) setIndexing(false);
       } catch (reason) {
-        console.error(reason);
-        if (active) setError(`Unable to load images from "${S3_BUCKET.bucketName}/${ARCHIVE_PATH}".`);
+        console.error("Archive indexing failed:", reason);
+        if (active) {
+          setError(`Unable to load images from "${S3_BUCKET.bucketName}/${ARCHIVE_PATH}".`);
+        }
       } finally {
         if (active) setLoadingInitial(false);
       }
-    })();
+    }
+
+    void indexArchive();
     return () => { active = false; };
   }, []);
 
@@ -162,9 +192,15 @@ export default function App() {
     return undefined;
   }, [loadingInitial, images.length, error]);
 
-  const collections = useMemo(() => Array.from(new Set(images.map((image) => image.collection))).sort(), [images]);
+  const collections = useMemo(
+    () => Array.from(new Set(images.map((image) => image.collection))).sort(),
+    [images],
+  );
+
   const categories = useMemo(() => {
-    const scoped = collection === ALL_COLLECTIONS ? images : images.filter((image) => image.collection === collection);
+    const scoped = collection === ALL_COLLECTIONS
+      ? images
+      : images.filter((image) => image.collection === collection);
     return Array.from(new Set(scoped.map((image) => image.category))).sort();
   }, [images, collection]);
 
@@ -173,13 +209,22 @@ export default function App() {
     return images.filter((image) =>
       (collection === ALL_COLLECTIONS || image.collection === collection) &&
       (category === ALL_CATEGORIES || image.category === category) &&
-      (!query || [image.name, image.collection, image.category, image.folder, image.path].join(" ").toLowerCase().includes(query)),
+      (!query || [image.name, image.collection, image.category, image.folder, image.path]
+        .join(" ")
+        .toLowerCase()
+        .includes(query)),
     );
   }, [images, search, collection, category]);
 
   const totalPages = Math.max(1, Math.ceil(filteredImages.length / PAGE_SIZE));
-  const currentMetadata = useMemo(() => filteredImages.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filteredImages, page]);
-  const pageKey = useMemo(() => currentMetadata.map((image) => image.path).join("\n"), [currentMetadata]);
+  const currentMetadata = useMemo(
+    () => filteredImages.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filteredImages, page],
+  );
+  const pageKey = useMemo(
+    () => currentMetadata.map((image) => image.path).join("\n"),
+    [currentMetadata],
+  );
 
   useEffect(() => { setPage(1); setSelected(null); }, [search, collection, category]);
   useEffect(() => { setCategory(ALL_CATEGORIES); }, [collection]);
@@ -202,7 +247,10 @@ export default function App() {
     setWarning("");
     setPageImages(snapshot);
 
-    const missing = snapshot.map((image, index) => image.url || image.failed ? -1 : index).filter((index) => index >= 0);
+    const missing = snapshot
+      .map((image, index) => image.url || image.failed ? -1 : index)
+      .filter((index) => index >= 0);
+
     if (!missing.length) {
       setLoadingPage(false);
       return () => { active = false; };
@@ -215,27 +263,44 @@ export default function App() {
         const index = missing[cursor++];
         const image = snapshot[index];
         try {
+          // TIFF records request their generated JPEG derivative.
           const url = await getImageUrl(image.thumbnailPath);
           const loaded: DisplayImage = { ...image, url, failed: false };
           displayCache.current.set(image.path, loaded);
-          if (active) setPageImages((previous) => previous.map((item) => item.path === image.path ? loaded : item));
+          if (active) {
+            setPageImages((previous) =>
+              previous.map((item) => item.path === image.path ? loaded : item),
+            );
+          }
         } catch (reason) {
           failures += 1;
-          console.error(reason);
+          console.error("Thumbnail failed:", reason);
           const failed: DisplayImage = { ...image, failed: true };
           displayCache.current.set(image.path, failed);
-          if (active) setPageImages((previous) => previous.map((item) => item.path === image.path ? failed : item));
+          if (active) {
+            setPageImages((previous) =>
+              previous.map((item) => item.path === image.path ? failed : item),
+            );
+          }
         } finally {
           completed += 1;
           if (active && completed === missing.length) {
             setLoadingPage(false);
-            if (failures) setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
+            if (failures) {
+              setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
+            }
           }
         }
       }
     }
 
-    void Promise.all(Array.from({ length: Math.min(URL_CONCURRENCY, missing.length) }, () => worker()));
+    void Promise.all(
+      Array.from(
+        { length: Math.min(URL_CONCURRENCY, missing.length) },
+        () => worker(),
+      ),
+    );
+
     return () => { active = false; };
   }, [pageKey]);
 
@@ -259,6 +324,7 @@ export default function App() {
       setWarning("");
       const response = await fetch(await getImageUrl(image.path));
       if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+
       const objectUrl = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
       link.href = objectUrl;
@@ -268,8 +334,8 @@ export default function App() {
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     } catch (reason) {
-      console.error(reason);
-      setWarning("The file could not be downloaded.");
+      console.error("Download failed:", reason);
+      setWarning("The original file could not be downloaded.");
     } finally {
       setDownloading(false);
     }
@@ -282,74 +348,143 @@ export default function App() {
     <>
       {showLoading && (
         <div className="archive-loading-screen" role="status" aria-live="polite">
-          <div className="archive-loading-card"><div className="spinner" /><h2>Loading Digital Archives</h2><p>Preparing the first results. The remaining archive continues indexing in the background.</p><div className="archive-loading-progress" /></div>
+          <div className="archive-loading-card">
+            <div className="spinner" aria-hidden="true" />
+            <h2>Loading Digital Archives</h2>
+            <p>Preparing the first results. The remaining archive continues indexing in the background.</p>
+            <div className="archive-loading-progress" aria-hidden="true" />
+          </div>
         </div>
       )}
 
       <div className="archive-shell">
         <aside className="sidebar">
-          <div className="brand"><div className="icp-logo"><span className="icp-symbol">ICP</span><span className="icp-name">International<br />Center of<br />Photography</span></div><div className="brand-divider" /><div className="archive-brand-title">Digital<br />Archives</div></div>
+          <div className="brand">
+            <div className="icp-logo">
+              <span className="icp-symbol">ICP</span>
+              <span className="icp-name">International<br />Center of<br />Photography</span>
+            </div>
+            <div className="brand-divider" />
+            <div className="archive-brand-title">Digital<br />Archives</div>
+          </div>
+
           <div className="static-filters">
             <label htmlFor="archive-search">Search archive</label>
             <input id="archive-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filename, folder, collection..." />
             <label htmlFor="collection">Collection</label>
-            <select id="collection" value={collection} onChange={(event) => setCollection(event.target.value)}><option value={ALL_COLLECTIONS}>All collections</option>{collections.map((value) => <option key={value}>{value}</option>)}</select>
+            <select id="collection" value={collection} onChange={(event) => setCollection(event.target.value)}>
+              <option value={ALL_COLLECTIONS}>All collections</option>
+              {collections.map((value) => <option key={value}>{value}</option>)}
+            </select>
             <label htmlFor="category">Category</label>
-            <select id="category" value={category} onChange={(event) => setCategory(event.target.value)}><option value={ALL_CATEGORIES}>All categories</option>{categories.map((value) => <option key={value}>{value}</option>)}</select>
+            <select id="category" value={category} onChange={(event) => setCategory(event.target.value)}>
+              <option value={ALL_CATEGORIES}>All categories</option>
+              {categories.map((value) => <option key={value}>{value}</option>)}
+            </select>
             <button type="button" className="clear-button" onClick={clearFilters}>Clear filters</button>
-            <div className="result-count"><span>{indexing ? "Indexed so far" : "Results"}</span><strong>{filteredImages.length.toLocaleString()}</strong></div>
+            <div className="result-count">
+              <span>{indexing ? "Indexed so far" : "Results"}</span>
+              <strong>{filteredImages.length.toLocaleString()}</strong>
+            </div>
           </div>
         </aside>
 
         <main className="main-content">
-          <header className="top-header"><h1>Digital Archives</h1><p>People. Photographs. A brighter tomorrow.</p></header>
-          {error ? <div className="status error">{error}</div> : (
+          <header className="top-header">
+            <h1>Digital Archives</h1>
+            <p>People. Photographs. A brighter tomorrow.</p>
+          </header>
+
+          {error ? (
+            <div className="status error">{error}</div>
+          ) : (
             <div className={selected ? "content-layout details-open" : "content-layout"}>
               <section className="results-area">
-                <div className="results-toolbar"><div className="results-summary"><strong>{filteredImages.length.toLocaleString()} {indexing ? "indexed" : "results"}</strong><span>Showing {first} to {last}</span></div><nav className="pagination"><button onClick={() => changePage(page - 1)} disabled={page === 1}>Previous</button><span>Page {page} of {totalPages}</span><button onClick={() => changePage(page + 1)} disabled={page === totalPages}>Next</button></nav></div>
+                <div className="results-toolbar">
+                  <div className="results-summary">
+                    <strong>{filteredImages.length.toLocaleString()} {indexing ? "indexed" : "results"}</strong>
+                    <span>Showing {first} to {last}</span>
+                  </div>
+                  <nav className="pagination" aria-label="Archive pagination">
+                    <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1}>Previous</button>
+                    <span>Page {page} of {totalPages}</span>
+                    <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages}>Next</button>
+                  </nav>
+                </div>
+
                 {warning && <div className="warning">{warning}</div>}
 
                 <div className="image-grid">
-                  {pageImages.map((image, index) => {
-                    const isTiff = TIFF_IMAGE.test(image.path);
-                    return (
-                      <button key={image.path} type="button" className={selected?.path === image.path ? "image-card selected" : "image-card"} disabled={!image.url} onClick={() => image.url && setSelected(image)}>
-                        <div className="thumbnail">
-                          {image.url && !isTiff ? (
-                            <img src={image.url} alt={image.name} loading={index < 4 ? "eager" : "lazy"} decoding="async" fetchPriority={index < 4 ? "high" : "auto"} />
-                          ) : isTiff ? (
-                            <div className="tiff-download-preview"><strong>TIFF</strong><span>Download to view</span></div>
-                          ) : image.failed ? (
-                            <div className="no-preview">Unavailable</div>
-                          ) : (
-                            <div className="thumbnail-skeleton" />
-                          )}
-                        </div>
-                        <div className="card-details"><strong>{image.name}</strong><span>{image.collection}</span><span>{image.category}</span><small>{image.lastModified ? image.lastModified.toLocaleDateString() : "Date unavailable"}</small></div>
-                      </button>
-                    );
-                  })}
+                  {pageImages.map((image, index) => (
+                    <button
+                      key={image.path}
+                      type="button"
+                      className={selected?.path === image.path ? "image-card selected" : "image-card"}
+                      disabled={!image.url}
+                      onClick={() => image.url && setSelected(image)}
+                    >
+                      <div className="thumbnail">
+                        {image.url ? (
+                          <img
+                            src={image.url}
+                            alt={image.name}
+                            loading={index < 4 ? "eager" : "lazy"}
+                            decoding="async"
+                            fetchPriority={index < 4 ? "high" : "auto"}
+                          />
+                        ) : image.failed ? (
+                          <div className="no-preview">Thumbnail unavailable</div>
+                        ) : (
+                          <div className="thumbnail-skeleton" aria-hidden="true" />
+                        )}
+                      </div>
+                      <div className="card-details">
+                        <strong title={image.name}>{image.name}</strong>
+                        <span>{image.collection}</span>
+                        <span>{image.category}</span>
+                        <small>{image.lastModified ? image.lastModified.toLocaleDateString() : "Date unavailable"}</small>
+                      </div>
+                    </button>
+                  ))}
                 </div>
 
-                <nav className="bottom-pagination"><button onClick={() => changePage(page - 1)} disabled={page === 1}>Previous</button><span>{loadingPage ? "Loading thumbnails..." : `Page ${page} of ${totalPages}`}</span><button onClick={() => changePage(page + 1)} disabled={page === totalPages}>Next</button></nav>
+                <nav className="bottom-pagination" aria-label="Bottom pagination">
+                  <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1}>Previous</button>
+                  <span>{loadingPage ? "Loading thumbnails..." : `Page ${page} of ${totalPages}`}</span>
+                  <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages}>Next</button>
+                </nav>
               </section>
 
               {selected && (
                 <aside className="details-panel">
-                  <div className="details-header"><strong>{selected.name}</strong><button onClick={() => setSelected(null)}>x</button></div>
+                  <div className="details-header">
+                    <strong>{selected.name}</strong>
+                    <button type="button" onClick={() => setSelected(null)} aria-label="Close details panel">x</button>
+                  </div>
                   <div className="details-preview">
-                    {TIFF_IMAGE.test(selected.path) ? (
-                      <div className="tiff-download-preview details-tiff"><strong>TIFF file</strong><span>Download to view</span></div>
-                    ) : selected.url ? (
-                      <img src={selected.url} alt={selected.name} />
-                    ) : null}
+                    {selected.url && <img src={selected.url} alt={selected.name} />}
                   </div>
                   <div className="details-actions">
-                    {(JPEG_IMAGE.test(selected.path) || TIFF_IMAGE.test(selected.path)) && (
-                      <button className="download-button" disabled={downloading} onClick={() => void downloadOriginal(selected)}>{downloading ? "Downloading..." : TIFF_IMAGE.test(selected.path) ? "Download TIFF to view" : "Download JPG"}</button>
-                    )}
+                    <button
+                      type="button"
+                      className="download-button"
+                      disabled={downloading}
+                      onClick={() => void downloadOriginal(selected)}
+                    >
+                      {downloading
+                        ? "Downloading..."
+                        : TIFF_IMAGE.test(selected.path)
+                          ? "Download original TIFF"
+                          : "Download original JPG"}
+                    </button>
                   </div>
-                  <dl className="metadata"><div><dt>Filename</dt><dd>{selected.name}</dd></div><div><dt>Collection</dt><dd>{selected.collection}</dd></div><div><dt>Category</dt><dd>{selected.category}</dd></div><div><dt>Folder</dt><dd>{selected.folder}</dd></div><div><dt>File size</dt><dd>{formatBytes(selected.size)}</dd></div></dl>
+                  <dl className="metadata">
+                    <div><dt>Filename</dt><dd>{selected.name}</dd></div>
+                    <div><dt>Collection</dt><dd>{selected.collection}</dd></div>
+                    <div><dt>Category</dt><dd>{selected.category}</dd></div>
+                    <div><dt>Folder</dt><dd>{selected.folder}</dd></div>
+                    <div><dt>File size</dt><dd>{formatBytes(selected.size)}</dd></div>
+                  </dl>
                 </aside>
               )}
             </div>
