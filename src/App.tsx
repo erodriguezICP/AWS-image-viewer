@@ -40,9 +40,11 @@ function relativeParts(path: string): string[] {
 
 function thumbnailPathFor(path: string): string {
   if (!TIFF_IMAGE.test(path)) return path;
+
   const relative = path.startsWith(ARCHIVE_PATH)
     ? path.slice(ARCHIVE_PATH.length)
-    : path;
+    : path.replace(/^\/+/, "");
+
   return `${THUMBNAIL_PATH}${relative.replace(/\.tiff?$/i, ".jpg")}`;
 }
 
@@ -53,6 +55,7 @@ function toArchiveImage(item: {
 }): ArchiveImage {
   const parts = relativeParts(item.path);
   const folders = parts.slice(0, -1);
+
   return {
     path: item.path,
     thumbnailPath: thumbnailPathFor(item.path),
@@ -78,9 +81,16 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
       () => reject(new Error(`Request timed out after ${timeoutMs / 1000} seconds.`)),
       timeoutMs,
     );
+
     promise.then(
-      (value) => { window.clearTimeout(timer); resolve(value); },
-      (reason) => { window.clearTimeout(timer); reject(reason); },
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (reason) => {
+        window.clearTimeout(timer);
+        reject(reason);
+      },
     );
   });
 }
@@ -108,7 +118,10 @@ export default function App() {
   async function getImageUrl(path: string): Promise<string> {
     const now = Date.now();
     const cached = urlCache.current.get(path);
-    if (cached && cached.expiresAt > now + URL_CACHE_SAFETY_MS) return cached.url;
+
+    if (cached && cached.expiresAt > now + URL_CACHE_SAFETY_MS) {
+      return cached.url;
+    }
 
     const pending = pendingUrls.current.get(path);
     if (pending) return pending;
@@ -116,7 +129,11 @@ export default function App() {
     const request = withTimeout(
       getUrl({
         path,
-        options: { bucket: S3_BUCKET, expiresIn: URL_EXPIRATION_SECONDS },
+        options: {
+          bucket: S3_BUCKET,
+          expiresIn: URL_EXPIRATION_SECONDS,
+          validateObjectExistence: true,
+        },
       }),
       URL_TIMEOUT_MS,
     )
@@ -134,6 +151,29 @@ export default function App() {
     return request;
   }
 
+  function markImageFailed(path: string): void {
+    const cached = displayCache.current.get(path);
+    const source = cached ?? pageImages.find((image) => image.path === path);
+    if (!source) return;
+
+    const failed: DisplayImage = { ...source, url: undefined, failed: true };
+    displayCache.current.set(path, failed);
+    urlCache.current.delete(source.thumbnailPath);
+
+    setPageImages((previous) =>
+      previous.map((item) => (item.path === path ? failed : item)),
+    );
+
+    setSelected((previous) =>
+      previous?.path === path ? failed : previous,
+    );
+
+    console.error("Browser could not display thumbnail", {
+      originalPath: source.path,
+      thumbnailPath: source.thumbnailPath,
+    });
+  }
+
   useEffect(() => {
     let active = true;
 
@@ -143,6 +183,7 @@ export default function App() {
 
       try {
         setError("");
+
         do {
           const result = await list({
             path: ARCHIVE_PATH,
@@ -152,6 +193,7 @@ export default function App() {
               nextToken,
             },
           });
+
           if (!active) return;
 
           const batch = result.items
@@ -166,6 +208,7 @@ export default function App() {
             setLoadingInitial(false);
             setIndexing(Boolean(nextToken));
           }
+
           await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
         } while (active && nextToken);
 
@@ -181,7 +224,9 @@ export default function App() {
     }
 
     void indexArchive();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -201,11 +246,13 @@ export default function App() {
     const scoped = collection === ALL_COLLECTIONS
       ? images
       : images.filter((image) => image.collection === collection);
+
     return Array.from(new Set(scoped.map((image) => image.category))).sort();
   }, [images, collection]);
 
   const filteredImages = useMemo(() => {
     const query = search.trim().toLowerCase();
+
     return images.filter((image) =>
       (collection === ALL_COLLECTIONS || image.collection === collection) &&
       (category === ALL_CATEGORIES || image.category === category) &&
@@ -217,18 +264,29 @@ export default function App() {
   }, [images, search, collection, category]);
 
   const totalPages = Math.max(1, Math.ceil(filteredImages.length / PAGE_SIZE));
+
   const currentMetadata = useMemo(
     () => filteredImages.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
     [filteredImages, page],
   );
+
   const pageKey = useMemo(
     () => currentMetadata.map((image) => image.path).join("\n"),
     [currentMetadata],
   );
 
-  useEffect(() => { setPage(1); setSelected(null); }, [search, collection, category]);
-  useEffect(() => { setCategory(ALL_CATEGORIES); }, [collection]);
-  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
+  useEffect(() => {
+    setPage(1);
+    setSelected(null);
+  }, [search, collection, category]);
+
+  useEffect(() => {
+    setCategory(ALL_CATEGORIES);
+  }, [collection]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   useEffect(() => {
     let active = true;
@@ -248,12 +306,14 @@ export default function App() {
     setPageImages(snapshot);
 
     const missing = snapshot
-      .map((image, index) => image.url || image.failed ? -1 : index)
+      .map((image, index) => (image.url || image.failed ? -1 : index))
       .filter((index) => index >= 0);
 
     if (!missing.length) {
       setLoadingPage(false);
-      return () => { active = false; };
+      return () => {
+        active = false;
+      };
     }
 
     setLoadingPage(true);
@@ -262,28 +322,51 @@ export default function App() {
       while (active && cursor < missing.length) {
         const index = missing[cursor++];
         const image = snapshot[index];
+
         try {
-          // TIFF records request their generated JPEG derivative.
-          const url = await getImageUrl(image.thumbnailPath);
-          const loaded: DisplayImage = { ...image, url, failed: false };
+          const displayPath = TIFF_IMAGE.test(image.path)
+            ? thumbnailPathFor(image.path)
+            : image.path;
+
+          console.debug("Loading archive preview", {
+            originalPath: image.path,
+            displayPath,
+          });
+
+          const url = await getImageUrl(displayPath);
+          const loaded: DisplayImage = {
+            ...image,
+            thumbnailPath: displayPath,
+            url,
+            failed: false,
+          };
+
           displayCache.current.set(image.path, loaded);
+
           if (active) {
             setPageImages((previous) =>
-              previous.map((item) => item.path === image.path ? loaded : item),
+              previous.map((item) => (item.path === image.path ? loaded : item)),
             );
           }
         } catch (reason) {
           failures += 1;
-          console.error("Thumbnail failed:", reason);
-          const failed: DisplayImage = { ...image, failed: true };
+          console.error("Thumbnail URL failed", {
+            originalPath: image.path,
+            thumbnailPath: image.thumbnailPath,
+            reason,
+          });
+
+          const failed: DisplayImage = { ...image, url: undefined, failed: true };
           displayCache.current.set(image.path, failed);
+
           if (active) {
             setPageImages((previous) =>
-              previous.map((item) => item.path === image.path ? failed : item),
+              previous.map((item) => (item.path === image.path ? failed : item)),
             );
           }
         } finally {
           completed += 1;
+
           if (active && completed === missing.length) {
             setLoadingPage(false);
             if (failures) {
@@ -301,7 +384,9 @@ export default function App() {
       ),
     );
 
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [pageKey]);
 
   function changePage(value: number): void {
@@ -322,6 +407,7 @@ export default function App() {
     try {
       setDownloading(true);
       setWarning("");
+
       const response = await fetch(await getImageUrl(image.path));
       if (!response.ok) throw new Error(`Download failed: ${response.status}`);
 
@@ -431,9 +517,12 @@ export default function App() {
                             loading={index < 4 ? "eager" : "lazy"}
                             decoding="async"
                             fetchPriority={index < 4 ? "high" : "auto"}
+                            onError={() => markImageFailed(image.path)}
                           />
                         ) : image.failed ? (
-                          <div className="no-preview">Thumbnail unavailable</div>
+                          <div className="no-preview">
+                            {TIFF_IMAGE.test(image.path) ? "TIFF preview unavailable" : "Thumbnail unavailable"}
+                          </div>
                         ) : (
                           <div className="thumbnail-skeleton" aria-hidden="true" />
                         )}
@@ -462,7 +551,15 @@ export default function App() {
                     <button type="button" onClick={() => setSelected(null)} aria-label="Close details panel">x</button>
                   </div>
                   <div className="details-preview">
-                    {selected.url && <img src={selected.url} alt={selected.name} />}
+                    {selected.url ? (
+                      <img
+                        src={selected.url}
+                        alt={selected.name}
+                        onError={() => markImageFailed(selected.path)}
+                      />
+                    ) : (
+                      <div className="no-preview">Preview unavailable</div>
+                    )}
                   </div>
                   <div className="details-actions">
                     <button
@@ -475,7 +572,7 @@ export default function App() {
                         ? "Downloading..."
                         : TIFF_IMAGE.test(selected.path)
                           ? "Download original TIFF"
-                          : "Download original JPG"}
+                          : "Download original image"}
                     </button>
                   </div>
                   <dl className="metadata">
@@ -484,6 +581,7 @@ export default function App() {
                     <div><dt>Category</dt><dd>{selected.category}</dd></div>
                     <div><dt>Folder</dt><dd>{selected.folder}</dd></div>
                     <div><dt>File size</dt><dd>{formatBytes(selected.size)}</dd></div>
+                    <div><dt>Preview object</dt><dd>{selected.thumbnailPath}</dd></div>
                   </dl>
                 </aside>
               )}
