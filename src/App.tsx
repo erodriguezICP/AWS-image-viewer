@@ -15,6 +15,7 @@ type ArchiveImage = {
 
 type DisplayImage = ArchiveImage & { url?: string; failed?: boolean };
 type CachedUrl = { url: string; expiresAt: number };
+type Availability = "idle" | "checking" | "available" | "unavailable";
 
 const ARCHIVE_PATH = "Key Manifest/";
 const THUMBNAIL_PATH = "Key Manifest Thumbnails/";
@@ -30,6 +31,7 @@ const ALL_CATEGORIES = "All categories";
 const UNCATEGORIZED = "Uncategorized";
 const IMAGE_FILE = /\.(avif|bmp|gif|jpe?g|png|tiff?|webp)$/i;
 const TIFF_IMAGE = /\.tiff?$/i;
+const JPEG_IMAGE = /\.jpe?g$/i;
 
 function relativeParts(path: string): string[] {
   const relative = path.startsWith(ARCHIVE_PATH)
@@ -40,22 +42,15 @@ function relativeParts(path: string): string[] {
 
 function thumbnailPathFor(path: string): string {
   if (!TIFF_IMAGE.test(path)) return path;
-
   const relative = path.startsWith(ARCHIVE_PATH)
     ? path.slice(ARCHIVE_PATH.length)
     : path.replace(/^\/+/, "");
-
   return `${THUMBNAIL_PATH}${relative.replace(/\.tiff?$/i, ".jpg")}`;
 }
 
-function toArchiveImage(item: {
-  path: string;
-  size?: number;
-  lastModified?: Date;
-}): ArchiveImage {
+function toArchiveImage(item: { path: string; size?: number; lastModified?: Date }): ArchiveImage {
   const parts = relativeParts(item.path);
   const folders = parts.slice(0, -1);
-
   return {
     path: item.path,
     thumbnailPath: thumbnailPathFor(item.path),
@@ -81,16 +76,9 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
       () => reject(new Error(`Request timed out after ${timeoutMs / 1000} seconds.`)),
       timeoutMs,
     );
-
     promise.then(
-      (value) => {
-        window.clearTimeout(timer);
-        resolve(value);
-      },
-      (reason) => {
-        window.clearTimeout(timer);
-        reject(reason);
-      },
+      (value) => { window.clearTimeout(timer); resolve(value); },
+      (reason) => { window.clearTimeout(timer); reject(reason); },
     );
   });
 }
@@ -108,6 +96,7 @@ export default function App() {
   const [indexing, setIndexing] = useState(false);
   const [loadingPage, setLoadingPage] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [downloadAvailability, setDownloadAvailability] = useState<Availability>("idle");
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
 
@@ -118,10 +107,7 @@ export default function App() {
   async function getImageUrl(path: string): Promise<string> {
     const now = Date.now();
     const cached = urlCache.current.get(path);
-
-    if (cached && cached.expiresAt > now + URL_CACHE_SAFETY_MS) {
-      return cached.url;
-    }
+    if (cached && cached.expiresAt > now + URL_CACHE_SAFETY_MS) return cached.url;
 
     const pending = pendingUrls.current.get(path);
     if (pending) return pending;
@@ -136,16 +122,14 @@ export default function App() {
         },
       }),
       URL_TIMEOUT_MS,
-    )
-      .then((result) => {
-        const url = result.url.toString();
-        urlCache.current.set(path, {
-          url,
-          expiresAt: Date.now() + URL_EXPIRATION_SECONDS * 1000,
-        });
-        return url;
-      })
-      .finally(() => pendingUrls.current.delete(path));
+    ).then((result) => {
+      const url = result.url.toString();
+      urlCache.current.set(path, {
+        url,
+        expiresAt: Date.now() + URL_EXPIRATION_SECONDS * 1000,
+      });
+      return url;
+    }).finally(() => pendingUrls.current.delete(path));
 
     pendingUrls.current.set(path, request);
     return request;
@@ -155,78 +139,46 @@ export default function App() {
     const cached = displayCache.current.get(path);
     const source = cached ?? pageImages.find((image) => image.path === path);
     if (!source) return;
-
     const failed: DisplayImage = { ...source, url: undefined, failed: true };
     displayCache.current.set(path, failed);
     urlCache.current.delete(source.thumbnailPath);
-
-    setPageImages((previous) =>
-      previous.map((item) => (item.path === path ? failed : item)),
-    );
-
-    setSelected((previous) =>
-      previous?.path === path ? failed : previous,
-    );
-
-    console.error("Browser could not display thumbnail", {
-      originalPath: source.path,
-      thumbnailPath: source.thumbnailPath,
-    });
+    setPageImages((previous) => previous.map((item) => item.path === path ? failed : item));
+    setSelected((previous) => previous?.path === path ? failed : previous);
   }
 
   useEffect(() => {
     let active = true;
-
     async function indexArchive(): Promise<void> {
       let nextToken: string | undefined;
       let firstBatch = true;
-
       try {
         setError("");
-
         do {
           const result = await list({
             path: ARCHIVE_PATH,
-            options: {
-              bucket: S3_BUCKET,
-              pageSize: METADATA_BATCH_SIZE,
-              nextToken,
-            },
+            options: { bucket: S3_BUCKET, pageSize: METADATA_BATCH_SIZE, nextToken },
           });
-
           if (!active) return;
-
-          const batch = result.items
-            .filter((item) => IMAGE_FILE.test(item.path))
-            .map(toArchiveImage);
-
+          const batch = result.items.filter((item) => IMAGE_FILE.test(item.path)).map(toArchiveImage);
           setImages((previous) => [...previous, ...batch]);
           nextToken = result.nextToken;
-
           if (firstBatch) {
             firstBatch = false;
             setLoadingInitial(false);
             setIndexing(Boolean(nextToken));
           }
-
           await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
         } while (active && nextToken);
-
         if (active) setIndexing(false);
       } catch (reason) {
         console.error("Archive indexing failed:", reason);
-        if (active) {
-          setError(`Unable to load images from "${S3_BUCKET.bucketName}/${ARCHIVE_PATH}".`);
-        }
+        if (active) setError(`Unable to load images from "${S3_BUCKET.bucketName}/${ARCHIVE_PATH}".`);
       } finally {
         if (active) setLoadingInitial(false);
       }
     }
-
     void indexArchive();
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -246,47 +198,32 @@ export default function App() {
     const scoped = collection === ALL_COLLECTIONS
       ? images
       : images.filter((image) => image.collection === collection);
-
     return Array.from(new Set(scoped.map((image) => image.category))).sort();
   }, [images, collection]);
 
   const filteredImages = useMemo(() => {
     const query = search.trim().toLowerCase();
-
     return images.filter((image) =>
       (collection === ALL_COLLECTIONS || image.collection === collection) &&
       (category === ALL_CATEGORIES || image.category === category) &&
       (!query || [image.name, image.collection, image.category, image.folder, image.path]
-        .join(" ")
-        .toLowerCase()
-        .includes(query)),
+        .join(" ").toLowerCase().includes(query)),
     );
   }, [images, search, collection, category]);
 
   const totalPages = Math.max(1, Math.ceil(filteredImages.length / PAGE_SIZE));
-
   const currentMetadata = useMemo(
     () => filteredImages.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
     [filteredImages, page],
   );
-
   const pageKey = useMemo(
     () => currentMetadata.map((image) => image.path).join("\n"),
     [currentMetadata],
   );
 
-  useEffect(() => {
-    setPage(1);
-    setSelected(null);
-  }, [search, collection, category]);
-
-  useEffect(() => {
-    setCategory(ALL_CATEGORIES);
-  }, [collection]);
-
-  useEffect(() => {
-    if (page > totalPages) setPage(totalPages);
-  }, [page, totalPages]);
+  useEffect(() => { setPage(1); setSelected(null); }, [search, collection, category]);
+  useEffect(() => { setCategory(ALL_CATEGORIES); }, [collection]);
+  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
 
   useEffect(() => {
     let active = true;
@@ -294,10 +231,9 @@ export default function App() {
     let completed = 0;
     let failures = 0;
 
-    const snapshot: DisplayImage[] = currentMetadata.map((image): DisplayImage => {
+    const snapshot: DisplayImage[] = currentMetadata.map((image) => {
       const cached = displayCache.current.get(image.path);
-      return cached
-        ? { ...image, url: cached.url, failed: cached.failed ?? false }
+      return cached ? { ...image, url: cached.url, failed: cached.failed ?? false }
         : { ...image, url: undefined, failed: false };
     });
 
@@ -305,89 +241,70 @@ export default function App() {
     setWarning("");
     setPageImages(snapshot);
 
-    const missing = snapshot
-      .map((image, index) => (image.url || image.failed ? -1 : index))
+    const missing = snapshot.map((image, index) => image.url || image.failed ? -1 : index)
       .filter((index) => index >= 0);
 
     if (!missing.length) {
       setLoadingPage(false);
-      return () => {
-        active = false;
-      };
+      return () => { active = false; };
     }
 
     setLoadingPage(true);
-
     async function worker(): Promise<void> {
       while (active && cursor < missing.length) {
         const index = missing[cursor++];
         const image = snapshot[index];
-
         try {
-          const displayPath = TIFF_IMAGE.test(image.path)
-            ? thumbnailPathFor(image.path)
-            : image.path;
-
-          console.debug("Loading archive preview", {
-            originalPath: image.path,
-            displayPath,
-          });
-
+          const displayPath = TIFF_IMAGE.test(image.path) ? thumbnailPathFor(image.path) : image.path;
           const url = await getImageUrl(displayPath);
-          const loaded: DisplayImage = {
-            ...image,
-            thumbnailPath: displayPath,
-            url,
-            failed: false,
-          };
-
+          const loaded: DisplayImage = { ...image, thumbnailPath: displayPath, url, failed: false };
           displayCache.current.set(image.path, loaded);
-
-          if (active) {
-            setPageImages((previous) =>
-              previous.map((item) => (item.path === image.path ? loaded : item)),
-            );
-          }
+          if (active) setPageImages((previous) =>
+            previous.map((item) => item.path === image.path ? loaded : item),
+          );
         } catch (reason) {
           failures += 1;
-          console.error("Thumbnail URL failed", {
-            originalPath: image.path,
-            thumbnailPath: image.thumbnailPath,
-            reason,
-          });
-
+          console.error("Thumbnail URL failed:", image.thumbnailPath, reason);
           const failed: DisplayImage = { ...image, url: undefined, failed: true };
           displayCache.current.set(image.path, failed);
-
-          if (active) {
-            setPageImages((previous) =>
-              previous.map((item) => (item.path === image.path ? failed : item)),
-            );
-          }
+          if (active) setPageImages((previous) =>
+            previous.map((item) => item.path === image.path ? failed : item),
+          );
         } finally {
           completed += 1;
-
           if (active && completed === missing.length) {
             setLoadingPage(false);
-            if (failures) {
-              setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
-            }
+            if (failures) setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
           }
         }
       }
     }
 
-    void Promise.all(
-      Array.from(
-        { length: Math.min(URL_CONCURRENCY, missing.length) },
-        () => worker(),
-      ),
-    );
+    void Promise.all(Array.from(
+      { length: Math.min(URL_CONCURRENCY, missing.length) },
+      () => worker(),
+    ));
 
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [pageKey]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selected) {
+      setDownloadAvailability("idle");
+      return () => { active = false; };
+    }
+
+    setDownloadAvailability("checking");
+    void getImageUrl(selected.path).then(() => {
+      if (active) setDownloadAvailability("available");
+    }).catch((reason) => {
+      console.error("Original availability check failed:", reason);
+      if (active) setDownloadAvailability("unavailable");
+    });
+
+    return () => { active = false; };
+  }, [selected?.path]);
 
   function changePage(value: number): void {
     setPage(Math.max(1, Math.min(value, totalPages)));
@@ -407,23 +324,52 @@ export default function App() {
     try {
       setDownloading(true);
       setWarning("");
-
-      const response = await fetch(await getImageUrl(image.path));
+      const signedUrl = await getImageUrl(image.path);
+      const response = await fetch(signedUrl, { method: "GET", mode: "cors" });
       if (!response.ok) throw new Error(`Download failed: ${response.status}`);
 
-      const objectUrl = URL.createObjectURL(await response.blob());
+      const blobUrl = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
-      link.href = objectUrl;
+      link.href = blobUrl;
       link.download = image.name;
+      link.style.display = "none";
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
     } catch (reason) {
-      console.error("Download failed:", reason);
-      setWarning("The original file could not be downloaded.");
+      console.error("Blob download failed; opening signed source URL:", reason);
+      try {
+        const signedUrl = await getImageUrl(image.path);
+        const link = document.createElement("a");
+        link.href = signedUrl;
+        link.download = image.name;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setWarning("The file opened in a new tab because the browser blocked the direct download. Use the browser download button to save it.");
+      } catch (fallbackReason) {
+        console.error("Download fallback failed:", fallbackReason);
+        setWarning("The selected source file is not currently downloadable.");
+        setDownloadAvailability("unavailable");
+      }
     } finally {
       setDownloading(false);
+    }
+  }
+
+  async function viewSourcePhoto(image: DisplayImage): Promise<void> {
+    try {
+      setWarning("");
+      const sourcePath = TIFF_IMAGE.test(image.path) ? image.thumbnailPath : image.path;
+      const sourceUrl = await getImageUrl(sourcePath);
+      const viewer = window.open(sourceUrl, "_blank", "noopener,noreferrer");
+      if (!viewer) setWarning("The browser blocked the source-photo window. Allow pop-ups and try again.");
+    } catch (reason) {
+      console.error("View source failed:", reason);
+      setWarning("The source photo could not be opened.");
     }
   }
 
@@ -481,9 +427,7 @@ export default function App() {
             <p>People. Photographs. A brighter tomorrow.</p>
           </header>
 
-          {error ? (
-            <div className="status error">{error}</div>
-          ) : (
+          {error ? <div className="status error">{error}</div> : (
             <div className={selected ? "content-layout details-open" : "content-layout"}>
               <section className="results-area">
                 <div className="results-toolbar">
@@ -520,12 +464,8 @@ export default function App() {
                             onError={() => markImageFailed(image.path)}
                           />
                         ) : image.failed ? (
-                          <div className="no-preview">
-                            {TIFF_IMAGE.test(image.path) ? "TIFF preview unavailable" : "Thumbnail unavailable"}
-                          </div>
-                        ) : (
-                          <div className="thumbnail-skeleton" aria-hidden="true" />
-                        )}
+                          <div className="no-preview">{TIFF_IMAGE.test(image.path) ? "TIFF preview unavailable" : "Thumbnail unavailable"}</div>
+                        ) : <div className="thumbnail-skeleton" aria-hidden="true" />}
                       </div>
                       <div className="card-details">
                         <strong title={image.name}>{image.name}</strong>
@@ -551,30 +491,42 @@ export default function App() {
                     <button type="button" onClick={() => setSelected(null)} aria-label="Close details panel">x</button>
                   </div>
                   <div className="details-preview">
-                    {selected.url ? (
-                      <img
-                        src={selected.url}
-                        alt={selected.name}
-                        onError={() => markImageFailed(selected.path)}
-                      />
-                    ) : (
-                      <div className="no-preview">Preview unavailable</div>
-                    )}
+                    {selected.url ? <img src={selected.url} alt={selected.name} onError={() => markImageFailed(selected.path)} />
+                      : <div className="no-preview">Preview unavailable</div>}
                   </div>
+
                   <div className="details-actions">
+                    <div className={`download-status ${downloadAvailability}`} aria-live="polite">
+                      {downloadAvailability === "checking" && "Checking source file..."}
+                      {downloadAvailability === "available" && "Source file is available to download"}
+                      {downloadAvailability === "unavailable" && "Source file is not currently downloadable"}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="view-source-button"
+                      disabled={!selected.url}
+                      onClick={() => void viewSourcePhoto(selected)}
+                    >
+                      View source photo
+                    </button>
+
                     <button
                       type="button"
                       className="download-button"
-                      disabled={downloading}
+                      disabled={downloading || downloadAvailability !== "available"}
                       onClick={() => void downloadOriginal(selected)}
                     >
                       {downloading
                         ? "Downloading..."
                         : TIFF_IMAGE.test(selected.path)
                           ? "Download original TIFF"
-                          : "Download original image"}
+                          : JPEG_IMAGE.test(selected.path)
+                            ? "Download JPG"
+                            : "Download original image"}
                     </button>
                   </div>
+
                   <dl className="metadata">
                     <div><dt>Filename</dt><dd>{selected.name}</dd></div>
                     <div><dt>Collection</dt><dd>{selected.collection}</dd></div>
