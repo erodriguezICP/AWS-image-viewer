@@ -34,6 +34,9 @@ backend.addOutput({
           "Key Manifest/*": {
             authenticated: ["get", "list"],
           },
+          "Key Manifest Thumbnails/*": {
+            authenticated: ["get", "list"],
+          },
         },
       },
     ],
@@ -50,6 +53,7 @@ const archivePolicy = new Policy(
         actions: ["s3:GetObject"],
         resources: [
           `${archiveBucket.bucketArn}/Key Manifest/*`,
+          `${archiveBucket.bucketArn}/Key Manifest Thumbnails/*`,
         ],
       }),
 
@@ -62,6 +66,8 @@ const archivePolicy = new Policy(
             "s3:prefix": [
               "Key Manifest/",
               "Key Manifest/*",
+              "Key Manifest Thumbnails/",
+              "Key Manifest Thumbnails/*",
             ],
           },
         },
