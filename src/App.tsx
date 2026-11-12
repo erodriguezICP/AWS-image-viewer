@@ -3,14 +3,14 @@ import { getUrl, list } from "aws-amplify/storage";
 import "./App.css";
 
 type ArchiveImage = {
-  path: string;
-  thumbnailPath: string;
-  name: string;
-  collection: string;
-  category: string;
-  folder: string;
-  size?: number;
-  lastModified?: Date;
+    path: string;
+    thumbnailPath: string;
+    name: string;
+    collection: string;
+    category: string;
+    folder: string;
+    size?: number;
+    lastModified?: Date;
 };
 
 type DisplayImage = ArchiveImage & { url?: string; failed?: boolean };
@@ -34,515 +34,523 @@ const TIFF_IMAGE = /\.tiff?$/i;
 const JPEG_IMAGE = /\.jpe?g$/i;
 
 function relativeParts(path: string): string[] {
-  const relative = path.startsWith(ARCHIVE_PATH)
-    ? path.slice(ARCHIVE_PATH.length)
-    : path;
-  return relative.split("/").filter(Boolean);
+    const relative = path.startsWith(ARCHIVE_PATH)
+        ? path.slice(ARCHIVE_PATH.length)
+        : path;
+    return relative.split("/").filter(Boolean);
 }
 
 function thumbnailPathFor(path: string): string {
-  if (!TIFF_IMAGE.test(path)) return path;
-  const relative = path.startsWith(ARCHIVE_PATH)
-    ? path.slice(ARCHIVE_PATH.length)
-    : path.replace(/^\/+/, "");
-  return `${THUMBNAIL_PATH}${relative.replace(/\.tiff?$/i, ".jpg")}`;
+    if (!TIFF_IMAGE.test(path)) return path;
+    const relative = path.startsWith(ARCHIVE_PATH)
+        ? path.slice(ARCHIVE_PATH.length)
+        : path.replace(/^\/+/, "");
+    return `${THUMBNAIL_PATH}${relative.replace(/\.tiff?$/i, ".jpg")}`;
 }
 
 function toArchiveImage(item: { path: string; size?: number; lastModified?: Date }): ArchiveImage {
-  const parts = relativeParts(item.path);
-  const folders = parts.slice(0, -1);
-  return {
-    path: item.path,
-    thumbnailPath: thumbnailPathFor(item.path),
-    name: parts.length > 0 ? parts[parts.length - 1] : item.path,
-    collection: folders[0] ?? UNCATEGORIZED,
-    category: folders[1] ?? UNCATEGORIZED,
-    folder: folders.length > 0 ? folders.join(" / ") : UNCATEGORIZED,
-    size: item.size,
-    lastModified: item.lastModified,
-  };
+    const parts = relativeParts(item.path);
+    const folders = parts.slice(0, -1);
+    return {
+        path: item.path,
+        thumbnailPath: thumbnailPathFor(item.path),
+        name: parts.length > 0 ? parts[parts.length - 1] : item.path,
+        collection: folders[0] ?? UNCATEGORIZED,
+        category: folders[1] ?? UNCATEGORIZED,
+        folder: folders.length > 0 ? folders.join(" / ") : UNCATEGORIZED,
+        size: item.size,
+        lastModified: item.lastModified,
+    };
 }
 
 function formatBytes(bytes?: number): string {
-  if (bytes === undefined) return "Unknown";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    if (bytes === undefined) return "Unknown";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = window.setTimeout(
-      () => reject(new Error(`Request timed out after ${timeoutMs / 1000} seconds.`)),
-      timeoutMs,
-    );
-    promise.then(
-      (value) => { window.clearTimeout(timer); resolve(value); },
-      (reason) => { window.clearTimeout(timer); reject(reason); },
-    );
-  });
+    return new Promise<T>((resolve, reject) => {
+        const timer = window.setTimeout(
+            () => reject(new Error(`Request timed out after ${timeoutMs / 1000} seconds.`)),
+            timeoutMs,
+        );
+        promise.then(
+            (value) => { window.clearTimeout(timer); resolve(value); },
+            (reason) => { window.clearTimeout(timer); reject(reason); },
+        );
+    });
 }
 
 export default function App() {
-  const [images, setImages] = useState<ArchiveImage[]>([]);
-  const [pageImages, setPageImages] = useState<DisplayImage[]>([]);
-  const [search, setSearch] = useState("");
-  const [collection, setCollection] = useState(ALL_COLLECTIONS);
-  const [category, setCategory] = useState(ALL_CATEGORIES);
-  const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState<DisplayImage | null>(null);
-  const [loadingInitial, setLoadingInitial] = useState(true);
-  const [showLoading, setShowLoading] = useState(true);
-  const [indexing, setIndexing] = useState(false);
-  const [loadingPage, setLoadingPage] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [downloadAvailability, setDownloadAvailability] = useState<Availability>("idle");
-  const [error, setError] = useState("");
-  const [warning, setWarning] = useState("");
+    const [images, setImages] = useState<ArchiveImage[]>([]);
+    const [pageImages, setPageImages] = useState<DisplayImage[]>([]);
+    const [search, setSearch] = useState("");
+    const [collection, setCollection] = useState(ALL_COLLECTIONS);
+    const [category, setCategory] = useState(ALL_CATEGORIES);
+    const [page, setPage] = useState(1);
+    const [selected, setSelected] = useState<DisplayImage | null>(null);
+    const [loadingInitial, setLoadingInitial] = useState(true);
+    const [showLoading, setShowLoading] = useState(true);
+    const [indexing, setIndexing] = useState(false);
+    const [loadingPage, setLoadingPage] = useState(false);
+    const [downloading, setDownloading] = useState(false);
+    const [downloadAvailability, setDownloadAvailability] = useState<Availability>("idle");
+    const [error, setError] = useState("");
+    const [warning, setWarning] = useState("");
 
-  const urlCache = useRef<Map<string, CachedUrl>>(new Map());
-  const pendingUrls = useRef<Map<string, Promise<string>>>(new Map());
-  const displayCache = useRef<Map<string, DisplayImage>>(new Map());
+    const urlCache = useRef<Map<string, CachedUrl>>(new Map());
+    const pendingUrls = useRef<Map<string, Promise<string>>>(new Map());
+    const displayCache = useRef<Map<string, DisplayImage>>(new Map());
 
-  async function getImageUrl(path: string): Promise<string> {
-    const now = Date.now();
-    const cached = urlCache.current.get(path);
-    if (cached && cached.expiresAt > now + URL_CACHE_SAFETY_MS) return cached.url;
+    async function getImageUrl(path: string): Promise<string> {
+        const now = Date.now();
+        const cached = urlCache.current.get(path);
+        if (cached && cached.expiresAt > now + URL_CACHE_SAFETY_MS) return cached.url;
 
-    const pending = pendingUrls.current.get(path);
-    if (pending) return pending;
+        const pending = pendingUrls.current.get(path);
+        if (pending) return pending;
 
-    const request = withTimeout(
-      getUrl({
-        path,
-        options: {
-          bucket: S3_BUCKET,
-          expiresIn: URL_EXPIRATION_SECONDS,
-          validateObjectExistence: true,
-        },
-      }),
-      URL_TIMEOUT_MS,
-    ).then((result) => {
-      const url = result.url.toString();
-      urlCache.current.set(path, {
-        url,
-        expiresAt: Date.now() + URL_EXPIRATION_SECONDS * 1000,
-      });
-      return url;
-    }).finally(() => pendingUrls.current.delete(path));
+        const request = withTimeout(
+            getUrl({
+                path,
+                options: {
+                    bucket: S3_BUCKET,
+                    expiresIn: URL_EXPIRATION_SECONDS,
+                    validateObjectExistence: true,
+                },
+            }),
+            URL_TIMEOUT_MS,
+        ).then((result) => {
+            const url = result.url.toString();
+            urlCache.current.set(path, {
+                url,
+                expiresAt: Date.now() + URL_EXPIRATION_SECONDS * 1000,
+            });
+            return url;
+        }).finally(() => pendingUrls.current.delete(path));
 
-    pendingUrls.current.set(path, request);
-    return request;
-  }
-
-  function markImageFailed(path: string): void {
-    const cached = displayCache.current.get(path);
-    const source = cached ?? pageImages.find((image) => image.path === path);
-    if (!source) return;
-    const failed: DisplayImage = { ...source, url: undefined, failed: true };
-    displayCache.current.set(path, failed);
-    urlCache.current.delete(source.thumbnailPath);
-    setPageImages((previous) => previous.map((item) => item.path === path ? failed : item));
-    setSelected((previous) => previous?.path === path ? failed : previous);
-  }
-
-  useEffect(() => {
-    let active = true;
-    async function indexArchive(): Promise<void> {
-      let nextToken: string | undefined;
-      let firstBatch = true;
-      try {
-        setError("");
-        do {
-          const result = await list({
-            path: ARCHIVE_PATH,
-            options: { bucket: S3_BUCKET, pageSize: METADATA_BATCH_SIZE, nextToken },
-          });
-          if (!active) return;
-          const batch = result.items.filter((item) => IMAGE_FILE.test(item.path)).map(toArchiveImage);
-          setImages((previous) => [...previous, ...batch]);
-          nextToken = result.nextToken;
-          if (firstBatch) {
-            firstBatch = false;
-            setLoadingInitial(false);
-            setIndexing(Boolean(nextToken));
-          }
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-        } while (active && nextToken);
-        if (active) setIndexing(false);
-      } catch (reason) {
-        console.error("Archive indexing failed:", reason);
-        if (active) setError(`Unable to load images from "${S3_BUCKET.bucketName}/${ARCHIVE_PATH}".`);
-      } finally {
-        if (active) setLoadingInitial(false);
-      }
-    }
-    void indexArchive();
-    return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
-    if ((!loadingInitial && images.length > 0) || error) {
-      const timer = window.setTimeout(() => setShowLoading(false), 250);
-      return () => window.clearTimeout(timer);
-    }
-    return undefined;
-  }, [loadingInitial, images.length, error]);
-
-  const collections = useMemo(
-    () => Array.from(new Set(images.map((image) => image.collection))).sort(),
-    [images],
-  );
-
-  const categories = useMemo(() => {
-    const scoped = collection === ALL_COLLECTIONS
-      ? images
-      : images.filter((image) => image.collection === collection);
-    return Array.from(new Set(scoped.map((image) => image.category))).sort();
-  }, [images, collection]);
-
-  const filteredImages = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return images.filter((image) =>
-      (collection === ALL_COLLECTIONS || image.collection === collection) &&
-      (category === ALL_CATEGORIES || image.category === category) &&
-      (!query || [image.name, image.collection, image.category, image.folder, image.path]
-        .join(" ").toLowerCase().includes(query)),
-    );
-  }, [images, search, collection, category]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredImages.length / PAGE_SIZE));
-  const currentMetadata = useMemo(
-    () => filteredImages.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [filteredImages, page],
-  );
-  const pageKey = useMemo(
-    () => currentMetadata.map((image) => image.path).join("\n"),
-    [currentMetadata],
-  );
-
-  useEffect(() => { setPage(1); setSelected(null); }, [search, collection, category]);
-  useEffect(() => { setCategory(ALL_CATEGORIES); }, [collection]);
-  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
-
-  useEffect(() => {
-    let active = true;
-    let cursor = 0;
-    let completed = 0;
-    let failures = 0;
-
-    const snapshot: DisplayImage[] = currentMetadata.map((image) => {
-      const cached = displayCache.current.get(image.path);
-      return cached ? { ...image, url: cached.url, failed: cached.failed ?? false }
-        : { ...image, url: undefined, failed: false };
-    });
-
-    setSelected(null);
-    setWarning("");
-    setPageImages(snapshot);
-
-    const missing = snapshot.map((image, index) => image.url || image.failed ? -1 : index)
-      .filter((index) => index >= 0);
-
-    if (!missing.length) {
-      setLoadingPage(false);
-      return () => { active = false; };
+        pendingUrls.current.set(path, request);
+        return request;
     }
 
-    setLoadingPage(true);
-    async function worker(): Promise<void> {
-      while (active && cursor < missing.length) {
-        const index = missing[cursor++];
-        const image = snapshot[index];
-        try {
-          const displayPath = TIFF_IMAGE.test(image.path) ? thumbnailPathFor(image.path) : image.path;
-          const url = await getImageUrl(displayPath);
-          const loaded: DisplayImage = { ...image, thumbnailPath: displayPath, url, failed: false };
-          displayCache.current.set(image.path, loaded);
-          if (active) setPageImages((previous) =>
-            previous.map((item) => item.path === image.path ? loaded : item),
-          );
-        } catch (reason) {
-          failures += 1;
-          console.error("Thumbnail URL failed:", image.thumbnailPath, reason);
-          const failed: DisplayImage = { ...image, url: undefined, failed: true };
-          displayCache.current.set(image.path, failed);
-          if (active) setPageImages((previous) =>
-            previous.map((item) => item.path === image.path ? failed : item),
-          );
-        } finally {
-          completed += 1;
-          if (active && completed === missing.length) {
-            setLoadingPage(false);
-            if (failures) setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
-          }
+    function markImageFailed(path: string): void {
+        const cached = displayCache.current.get(path);
+        const source = cached ?? pageImages.find((image) => image.path === path);
+        if (!source) return;
+        const failed: DisplayImage = { ...source, url: undefined, failed: true };
+        displayCache.current.set(path, failed);
+        urlCache.current.delete(source.thumbnailPath);
+        setPageImages((previous) => previous.map((item) => item.path === path ? failed : item));
+        setSelected((previous) => previous?.path === path ? failed : previous);
+    }
+
+    useEffect(() => {
+        let active = true;
+        async function indexArchive(): Promise<void> {
+            let nextToken: string | undefined;
+            let firstBatch = true;
+            try {
+                setError("");
+                do {
+                    const result = await list({
+                        path: ARCHIVE_PATH,
+                        options: { bucket: S3_BUCKET, pageSize: METADATA_BATCH_SIZE, nextToken },
+                    });
+                    if (!active) return;
+                    const batch = result.items.filter((item) => IMAGE_FILE.test(item.path)).map(toArchiveImage);
+                    setImages((previous) => [...previous, ...batch]);
+                    nextToken = result.nextToken;
+                    if (firstBatch) {
+                        firstBatch = false;
+                        setLoadingInitial(false);
+                        setIndexing(Boolean(nextToken));
+                    }
+                    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+                } while (active && nextToken);
+                if (active) setIndexing(false);
+            } catch (reason) {
+                console.error("Archive indexing failed:", reason);
+                if (active) setError(`Unable to load images from "${S3_BUCKET.bucketName}/${ARCHIVE_PATH}".`);
+            } finally {
+                if (active) setLoadingInitial(false);
+            }
         }
-      }
+        void indexArchive();
+        return () => { active = false; };
+    }, []);
+
+    useEffect(() => {
+        if ((!loadingInitial && images.length > 0) || error) {
+            const timer = window.setTimeout(() => setShowLoading(false), 250);
+            return () => window.clearTimeout(timer);
+        }
+        return undefined;
+    }, [loadingInitial, images.length, error]);
+
+    const collections = useMemo(
+        () => Array.from(new Set(images.map((image) => image.collection))).sort(),
+        [images],
+    );
+
+    const categories = useMemo(() => {
+        const scoped = collection === ALL_COLLECTIONS
+            ? images
+            : images.filter((image) => image.collection === collection);
+        return Array.from(new Set(scoped.map((image) => image.category))).sort();
+    }, [images, collection]);
+
+    const filteredImages = useMemo(() => {
+        const query = search.trim().toLowerCase();
+        return images.filter((image) =>
+            (collection === ALL_COLLECTIONS || image.collection === collection) &&
+            (category === ALL_CATEGORIES || image.category === category) &&
+            (!query || [image.name, image.collection, image.category, image.folder, image.path]
+                .join(" ").toLowerCase().includes(query)),
+        );
+    }, [images, search, collection, category]);
+
+    const totalPages = Math.max(1, Math.ceil(filteredImages.length / PAGE_SIZE));
+    const currentMetadata = useMemo(
+        () => filteredImages.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+        [filteredImages, page],
+    );
+    const pageKey = useMemo(
+        () => currentMetadata.map((image) => image.path).join("\n"),
+        [currentMetadata],
+    );
+
+    useEffect(() => { setPage(1); setSelected(null); }, [search, collection, category]);
+    useEffect(() => { setCategory(ALL_CATEGORIES); }, [collection]);
+    useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
+
+    useEffect(() => {
+        let active = true;
+        let cursor = 0;
+        let completed = 0;
+        let failures = 0;
+
+        const snapshot: DisplayImage[] = currentMetadata.map((image) => {
+            const cached = displayCache.current.get(image.path);
+            return cached ? { ...image, url: cached.url, failed: cached.failed ?? false }
+                : { ...image, url: undefined, failed: false };
+        });
+
+        setSelected(null);
+        setWarning("");
+        setPageImages(snapshot);
+
+        const missing = snapshot.map((image, index) => image.url || image.failed ? -1 : index)
+            .filter((index) => index >= 0);
+
+        if (!missing.length) {
+            setLoadingPage(false);
+            return () => { active = false; };
+        }
+
+        setLoadingPage(true);
+        async function worker(): Promise<void> {
+            while (active && cursor < missing.length) {
+                const index = missing[cursor++];
+                const image = snapshot[index];
+                try {
+                    const displayPath = TIFF_IMAGE.test(image.path) ? thumbnailPathFor(image.path) : image.path;
+                    const url = await getImageUrl(displayPath);
+                    const loaded: DisplayImage = { ...image, thumbnailPath: displayPath, url, failed: false };
+                    displayCache.current.set(image.path, loaded);
+                    if (active) setPageImages((previous) =>
+                        previous.map((item) => item.path === image.path ? loaded : item),
+                    );
+                } catch (reason) {
+                    failures += 1;
+                    console.error("Thumbnail URL failed:", image.thumbnailPath, reason);
+                    const failed: DisplayImage = { ...image, url: undefined, failed: true };
+                    displayCache.current.set(image.path, failed);
+                    if (active) setPageImages((previous) =>
+                        previous.map((item) => item.path === image.path ? failed : item),
+                    );
+                } finally {
+                    completed += 1;
+                    if (active && completed === missing.length) {
+                        setLoadingPage(false);
+                        if (failures) setWarning(`${failures} image${failures === 1 ? "" : "s"} could not be loaded.`);
+                    }
+                }
+            }
+        }
+
+        void Promise.all(Array.from(
+            { length: Math.min(URL_CONCURRENCY, missing.length) },
+            () => worker(),
+        ));
+
+        return () => { active = false; };
+    }, [pageKey]);
+
+    useEffect(() => {
+        let active = true;
+        if (!selected) {
+            setDownloadAvailability("idle");
+            return () => { active = false; };
+        }
+
+        setDownloadAvailability("checking");
+        void getImageUrl(selected.path).then(() => {
+            if (active) setDownloadAvailability("available");
+        }).catch((reason) => {
+            console.error("Original availability check failed:", reason);
+            if (active) setDownloadAvailability("unavailable");
+        });
+
+        return () => { active = false; };
+    }, [selected?.path]);
+
+    function changePage(value: number): void {
+        setPage(Math.max(1, Math.min(value, totalPages)));
+        setSelected(null);
+        window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
-    void Promise.all(Array.from(
-      { length: Math.min(URL_CONCURRENCY, missing.length) },
-      () => worker(),
-    ));
-
-    return () => { active = false; };
-  }, [pageKey]);
-
-  useEffect(() => {
-    let active = true;
-    if (!selected) {
-      setDownloadAvailability("idle");
-      return () => { active = false; };
+    function clearFilters(): void {
+        setSearch("");
+        setCollection(ALL_COLLECTIONS);
+        setCategory(ALL_CATEGORIES);
+        setPage(1);
+        setSelected(null);
     }
 
-    setDownloadAvailability("checking");
-    void getImageUrl(selected.path).then(() => {
-      if (active) setDownloadAvailability("available");
-    }).catch((reason) => {
-      console.error("Original availability check failed:", reason);
-      if (active) setDownloadAvailability("unavailable");
-    });
+    async function downloadOriginal(image: DisplayImage): Promise<void> {
+        try {
+            setDownloading(true);
+            setWarning("");
+            const signedUrl = await getImageUrl(image.path);
+            const response = await fetch(signedUrl, { method: "GET", mode: "cors" });
+            if (!response.ok) throw new Error(`Download failed: ${response.status}`);
 
-    return () => { active = false; };
-  }, [selected?.path]);
-
-  function changePage(value: number): void {
-    setPage(Math.max(1, Math.min(value, totalPages)));
-    setSelected(null);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function clearFilters(): void {
-    setSearch("");
-    setCollection(ALL_COLLECTIONS);
-    setCategory(ALL_CATEGORIES);
-    setPage(1);
-    setSelected(null);
-  }
-
-  async function downloadOriginal(image: DisplayImage): Promise<void> {
-    setDownloading(true);
-    setWarning("");
-
-    try {
-      // Fetch the original object, not the thumbnail/preview. Converting it to a
-      // Blob lets the browser download the file with its original filename.
-      const signedUrl = await getImageUrl(image.path);
-      const response = await fetch(signedUrl, {
-        method: "GET",
-        mode: "cors",
-        credentials: "omit",
-      });
-
-      if (!response.ok) {
-        throw new Error(`The storage service returned ${response.status}.`);
-      }
-
-      const blob = await response.blob();
-      if (!blob.size) throw new Error("The downloaded file was empty.");
-
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = image.name;
-      link.style.display = "none";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-
-      // Keep the object URL alive long enough for the browser to start saving.
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-    } catch (reason) {
-      console.error("Original image download failed:", reason);
-      setWarning(
-        "The download could not be started. Check the S3 bucket CORS settings and your Amplify Storage permissions, then try again."
-      );
-    } finally {
-      setDownloading(false);
+            const blobUrl = URL.createObjectURL(await response.blob());
+            const link = document.createElement("a");
+            link.href = blobUrl;
+            link.download = image.name;
+            link.style.display = "none";
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        } catch (reason) {
+            console.error("Blob download failed; opening signed source URL:", reason);
+            try {
+                const signedUrl = await getImageUrl(image.path);
+                const link = document.createElement("a");
+                link.href = signedUrl;
+                link.download = image.name;
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setWarning("The file opened in a new tab because the browser blocked the direct download. Use the browser download button to save it.");
+            } catch (fallbackReason) {
+                console.error("Download fallback failed:", fallbackReason);
+                setWarning("The selected source file is not currently downloadable.");
+                setDownloadAvailability("unavailable");
+            }
+        } finally {
+            setDownloading(false);
+        }
     }
-  }
 
-  async function viewSourcePhoto(image: DisplayImage): Promise<void> {
-    try {
-      setWarning("");
-      const sourcePath = TIFF_IMAGE.test(image.path) ? image.thumbnailPath : image.path;
-      const sourceUrl = await getImageUrl(sourcePath);
-      const viewer = window.open(sourceUrl, "_blank", "noopener,noreferrer");
-      if (!viewer) setWarning("The browser blocked the source-photo window. Allow pop-ups and try again.");
-    } catch (reason) {
-      console.error("View source failed:", reason);
-      setWarning("The source photo could not be opened.");
+    async function viewSourcePhoto(image: DisplayImage): Promise<void> {
+        try {
+            setWarning("");
+            const sourcePath = TIFF_IMAGE.test(image.path) ? image.thumbnailPath : image.path;
+            const sourceUrl = await getImageUrl(sourcePath);
+            const viewer = window.open(sourceUrl, "_blank", "noopener,noreferrer");
+            if (!viewer) setWarning("The browser blocked the source-photo window. Allow pop-ups and try again.");
+        } catch (reason) {
+            console.error("View source failed:", reason);
+            setWarning("The source photo could not be opened.");
+        }
     }
-  }
 
-  const first = filteredImages.length ? (page - 1) * PAGE_SIZE + 1 : 0;
-  const last = Math.min(page * PAGE_SIZE, filteredImages.length);
+    const first = filteredImages.length ? (page - 1) * PAGE_SIZE + 1 : 0;
+    const last = Math.min(page * PAGE_SIZE, filteredImages.length);
 
-  return (
-    <>
-      {showLoading && (
-        <div className="archive-loading-screen" role="status" aria-live="polite">
-          <div className="archive-loading-card">
-            <div className="spinner" aria-hidden="true" />
-            <h2>Loading Digital Archives</h2>
-            <p>Preparing the first results. The remaining archive continues indexing in the background.</p>
-            <div className="archive-loading-progress" aria-hidden="true" />
-          </div>
-        </div>
-      )}
+    return (
+        <>
+        { showLoading && (
+            <div className= "archive-loading-screen" role = "status" aria - live="polite" >
+                <div className="archive-loading-card" >
+                    <div className="spinner" aria - hidden="true" />
+                        <h2>Loading Digital Archives </h2>
+                            < p > Preparing the first results.The remaining archive continues indexing in the background.</p>
+                                < div className = "archive-loading-progress" aria - hidden="true" />
+                                    </div>
+                                    </div>
+      )
+}
 
-      <div className="archive-shell">
-        <aside className="sidebar">
-          <div className="brand">
-            <div className="icp-logo">
-              <span className="icp-symbol">ICP</span>
-              <span className="icp-name">International<br />Center of<br />Photography</span>
+<div className="archive-shell" >
+    <aside className="sidebar" >
+        <div className="brand" >
+            <div className="icp-logo" >
+                <span className="icp-symbol" > ICP </span>
+                    < span className = "icp-name" > International < br /> Center of < br /> Photography </span>
+                        </div>
+                        < div className = "brand-divider" />
+                            <div className="archive-brand-title" > Digital < br /> Archives </div>
+                                </div>
+
+                                < div className = "static-filters" >
+                                    <label htmlFor="archive-search" > Search archive </label>
+                                        < input id = "archive-search" type = "search" value = { search } onChange = {(event) => setSearch(event.target.value)} placeholder = "Filename, folder, collection..." />
+                                            <label htmlFor="collection" > Collection </label>
+                                                < select id = "collection" value = { collection } onChange = {(event) => setCollection(event.target.value)}>
+                                                    <option value={ ALL_COLLECTIONS }> All collections </option>
+{ collections.map((value) => <option key={ value } > { value } </option>) }
+</select>
+    < label htmlFor = "category" > Category </label>
+        < select id = "category" value = { category } onChange = {(event) => setCategory(event.target.value)}>
+            <option value={ ALL_CATEGORIES }> All categories </option>
+{ categories.map((value) => <option key={ value } > { value } </option>) }
+</select>
+    < button type = "button" className = "clear-button" onClick = { clearFilters } > Clear filters </button>
+        < div className = "result-count" >
+            <span>{ indexing? "Indexed so far": "Results" } </span>
+            < strong > { filteredImages.length.toLocaleString() } </strong>
             </div>
-            <div className="brand-divider" />
-            <div className="archive-brand-title">Digital<br />Archives</div>
-          </div>
-
-          <div className="static-filters">
-            <label htmlFor="archive-search">Search archive</label>
-            <input id="archive-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filename, folder, collection..." />
-            <label htmlFor="collection">Collection</label>
-            <select id="collection" value={collection} onChange={(event) => setCollection(event.target.value)}>
-              <option value={ALL_COLLECTIONS}>All collections</option>
-              {collections.map((value) => <option key={value}>{value}</option>)}
-            </select>
-            <label htmlFor="category">Category</label>
-            <select id="category" value={category} onChange={(event) => setCategory(event.target.value)}>
-              <option value={ALL_CATEGORIES}>All categories</option>
-              {categories.map((value) => <option key={value}>{value}</option>)}
-            </select>
-            <button type="button" className="clear-button" onClick={clearFilters}>Clear filters</button>
-            <div className="result-count">
-              <span>{indexing ? "Indexed so far" : "Results"}</span>
-              <strong>{filteredImages.length.toLocaleString()}</strong>
             </div>
-          </div>
-        </aside>
+            </aside>
 
-        <main className="main-content">
-          <header className="top-header">
-            <h1>Digital Archives</h1>
-            <p>People. Photographs. A brighter tomorrow.</p>
-          </header>
+            < main className = "main-content" >
+                <header className="top-header" >
+                    <h1>Digital Archives </h1>
+                        < p > People.Photographs.A brighter tomorrow.</p>
+                            </header>
 
-          {error ? <div className="status error">{error}</div> : (
-            <div className={selected ? "content-layout details-open" : "content-layout"}>
-              <section className="results-area">
-                <div className="results-toolbar">
-                  <div className="results-summary">
-                    <strong>{filteredImages.length.toLocaleString()} {indexing ? "indexed" : "results"}</strong>
-                    <span>Showing {first} to {last}</span>
-                  </div>
-                  <nav className="pagination" aria-label="Archive pagination">
-                    <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1}>Previous</button>
-                    <span>Page {page} of {totalPages}</span>
-                    <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages}>Next</button>
-                  </nav>
-                </div>
+{
+    error ? <div className="status error" > { error } </div> : (
+        < div className = { selected? "content-layout details-open": "content-layout" } >
+            <section className="results-area" >
+                <div className="results-toolbar" >
+                    <div className="results-summary" >
+                        <strong>{ filteredImages.length.toLocaleString() } { indexing ? "indexed" : "results" } </strong>
+                            < span > Showing { first } to { last } </span>
+                                </div>
+                                < nav className = "pagination" aria - label="Archive pagination" >
+                                    <button type="button" onClick = {() => changePage(page - 1)
+} disabled = { page === 1}> Previous </button>
+    < span > Page { page } of { totalPages } </span>
+        < button type = "button" onClick = {() => changePage(page + 1)} disabled = { page === totalPages}> Next </button>
+            </nav>
+            </div>
 
-                {warning && <div className="warning">{warning}</div>}
+{ warning && <div className="warning" > { warning } </div> }
 
-                <div className="image-grid">
-                  {pageImages.map((image, index) => (
-                    <button
-                      key={image.path}
-                      type="button"
-                      className={selected?.path === image.path ? "image-card selected" : "image-card"}
-                      disabled={!image.url}
-                      onClick={() => image.url && setSelected(image)}
+<div className="image-grid" >
+{
+    pageImages.map((image, index) => (
+        <button
+                      key= { image.path }
+                      type = "button"
+                      className = { selected?.path === image.path ? "image-card selected" : "image-card"}
+disabled = {!image.url}
+onClick = {() => image.url && setSelected(image)}
                     >
-                      <div className="thumbnail">
-                        {image.url ? (
-                          <img
-                            src={image.url}
-                            alt={image.name}
-                            loading={index < 4 ? "eager" : "lazy"}
+    <div className="thumbnail" >
+        {
+            image.url ? (
+                <img
+                            src= { image.url }
+                            alt={ image.name }
+                            loading={ index< 4? "eager" : "lazy"}
                             decoding="async"
-                            fetchPriority={index < 4 ? "high" : "auto"}
-                            onError={() => markImageFailed(image.path)}
-                          />
+                            fetchPriority={ index< 4? "high" : "auto"}
+                            onError={() => markImageFailed(image.path)
+        }
+        />
                         ) : image.failed ? (
-                          <div className="no-preview">{TIFF_IMAGE.test(image.path) ? "TIFF preview unavailable" : "Thumbnail unavailable"}</div>
-                        ) : <div className="thumbnail-skeleton" aria-hidden="true" />}
-                      </div>
-                      <div className="card-details">
-                        <strong title={image.name}>{image.name}</strong>
-                        <span>{image.collection}</span>
-                        <span>{image.category}</span>
-                        <small>{image.lastModified ? image.lastModified.toLocaleDateString() : "Date unavailable"}</small>
-                      </div>
-                    </button>
+    <div className= "no-preview" > { TIFF_IMAGE.test(image.path) ? "TIFF preview unavailable" : "Thumbnail unavailable" } </div>
+                        ) : <div className="thumbnail-skeleton" aria - hidden="true" />}
+</div>
+    < div className = "card-details" >
+        <strong title={ image.name }> { image.name } </strong>
+            < span > { image.collection } </span>
+            < span > { image.category } </span>
+            < small > { image.lastModified ? image.lastModified.toLocaleDateString() : "Date unavailable" } </small>
+            </div>
+            </button>
                   ))}
-                </div>
+</div>
 
-                <nav className="bottom-pagination" aria-label="Bottom pagination">
-                  <button type="button" onClick={() => changePage(page - 1)} disabled={page === 1}>Previous</button>
-                  <span>{loadingPage ? "Loading thumbnails..." : `Page ${page} of ${totalPages}`}</span>
-                  <button type="button" onClick={() => changePage(page + 1)} disabled={page === totalPages}>Next</button>
+    < nav className = "bottom-pagination" aria - label="Bottom pagination" >
+        <button type="button" onClick = {() => changePage(page - 1)} disabled = { page === 1}> Previous </button>
+            < span > { loadingPage? "Loading thumbnails...": `Page ${page} of ${totalPages}` } </span>
+            < button type = "button" onClick = {() => changePage(page + 1)} disabled = { page === totalPages}> Next </button>
                 </nav>
-              </section>
+                </section>
 
-              {selected && (
-                <aside className="details-panel">
-                  <div className="details-header">
-                    <strong>{selected.name}</strong>
-                    <button type="button" onClick={() => setSelected(null)} aria-label="Close details panel">x</button>
-                  </div>
-                  <div className="details-preview">
-                    {selected.url ? <img src={selected.url} alt={selected.name} onError={() => markImageFailed(selected.path)} />
-                      : <div className="no-preview">Preview unavailable</div>}
-                  </div>
+{
+    selected && (
+        <aside className="details-panel" >
+            <div className="details-header" >
+                <strong>{ selected.name } </strong>
+                < button type = "button" onClick = {() => setSelected(null)
+} aria - label="Close details panel" > x </button>
+    </div>
+    < div className = "details-preview" >
+    { selected.url ? <img src={ selected.url } alt = { selected.name } onError = {() => markImageFailed(selected.path)} />
+                      : <div className="no-preview" > Preview unavailable </div>}
+</div>
 
-                  <div className="details-actions">
-                    <div className={`download-status ${downloadAvailability}`} aria-live="polite">
-                      {downloadAvailability === "checking" && "Checking source file..."}
-                      {downloadAvailability === "available" && "Source file is available to download"}
-                      {downloadAvailability === "unavailable" && "Source file is not currently downloadable"}
-                    </div>
+    < div className = "details-actions" >
+        <div className={ `download-status ${downloadAvailability}` } aria - live="polite" >
+        { downloadAvailability === "checking" && "Checking source file..."}
+{ downloadAvailability === "available" && "Source file is available to download" }
+{ downloadAvailability === "unavailable" && "Source file is not currently downloadable" }
+</div>
 
-                    <button
-                      type="button"
-                      className="view-source-button"
-                      disabled={!selected.url}
-                      onClick={() => void viewSourcePhoto(selected)}
+    < button
+type = "button"
+className = "view-source-button"
+disabled = {!selected.url}
+onClick = {() => void viewSourcePhoto(selected)}
                     >
-                      View source photo
-                    </button>
+    View source photo
+        </button>
 
-                    <button
-                      type="button"
-                      className="download-button"
-                      disabled={downloading || downloadAvailability !== "available"}
-                      onClick={() => void downloadOriginal(selected)}
+        < button
+type = "button"
+className = "download-button"
+disabled = { downloading || downloadAvailability !== "available"}
+onClick = {() => void downloadOriginal(selected)}
                     >
-                      {downloading
-                        ? "Downloading..."
-                        : TIFF_IMAGE.test(selected.path)
-                          ? "Download original TIFF"
-                          : JPEG_IMAGE.test(selected.path)
-                            ? "Download JPG"
-                            : "Download original image"}
-                    </button>
-                  </div>
+{
+    downloading
+    ? "Downloading..."
+        : TIFF_IMAGE.test(selected.path)
+            ? "Download original TIFF"
+            : JPEG_IMAGE.test(selected.path)
+                ? "Download JPG"
+                : "Download original image"
+}
+    </button>
+    </div>
 
-                  <dl className="metadata">
-                    <div><dt>Filename</dt><dd>{selected.name}</dd></div>
-                    <div><dt>Collection</dt><dd>{selected.collection}</dd></div>
-                    <div><dt>Category</dt><dd>{selected.category}</dd></div>
-                    <div><dt>Folder</dt><dd>{selected.folder}</dd></div>
-                    <div><dt>File size</dt><dd>{formatBytes(selected.size)}</dd></div>
-                    <div><dt>Preview object</dt><dd>{selected.thumbnailPath}</dd></div>
-                  </dl>
+    < dl className = "metadata" >
+        <div><dt>Filename < /dt><dd>{selected.name}</dd > </div>
+        < div > <dt>Collection < /dt><dd>{selected.collection}</dd > </div>
+        < div > <dt>Category < /dt><dd>{selected.category}</dd > </div>
+        < div > <dt>Folder < /dt><dd>{selected.folder}</dd > </div>
+        < div > <dt>File size < /dt><dd>{formatBytes(selected.size)}</dd > </div>
+            < div > <dt>Preview object < /dt><dd>{selected.thumbnailPath}</dd > </div>
+                </dl>
                 </aside>
               )}
-            </div>
+</div>
           )}
-        </main>
-      </div>
+</main>
+    </div>
     </>
   );
 }
