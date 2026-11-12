@@ -321,40 +321,42 @@ export default function App() {
   }
 
   async function downloadOriginal(image: DisplayImage): Promise<void> {
-    try {
-      setDownloading(true);
-      setWarning("");
-      const signedUrl = await getImageUrl(image.path);
-      const response = await fetch(signedUrl, { method: "GET", mode: "cors" });
-      if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    setDownloading(true);
+    setWarning("");
 
-      const blobUrl = URL.createObjectURL(await response.blob());
+    try {
+      // Fetch the original object, not the thumbnail/preview. Converting it to a
+      // Blob lets the browser download the file with its original filename.
+      const signedUrl = await getImageUrl(image.path);
+      const response = await fetch(signedUrl, {
+        method: "GET",
+        mode: "cors",
+        credentials: "omit",
+      });
+
+      if (!response.ok) {
+        throw new Error(`The storage service returned ${response.status}.`);
+      }
+
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("The downloaded file was empty.");
+
+      const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = blobUrl;
+      link.href = objectUrl;
       link.download = image.name;
       link.style.display = "none";
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+
+      // Keep the object URL alive long enough for the browser to start saving.
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     } catch (reason) {
-      console.error("Blob download failed; opening signed source URL:", reason);
-      try {
-        const signedUrl = await getImageUrl(image.path);
-        const link = document.createElement("a");
-        link.href = signedUrl;
-        link.download = image.name;
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        setWarning("The file opened in a new tab because the browser blocked the direct download. Use the browser download button to save it.");
-      } catch (fallbackReason) {
-        console.error("Download fallback failed:", fallbackReason);
-        setWarning("The selected source file is not currently downloadable.");
-        setDownloadAvailability("unavailable");
-      }
+      console.error("Original image download failed:", reason);
+      setWarning(
+        "The download could not be started. Check the S3 bucket CORS settings and your Amplify Storage permissions, then try again."
+      );
     } finally {
       setDownloading(false);
     }
