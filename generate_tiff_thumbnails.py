@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Create browser-friendly JPEG derivatives for TIFF files stored in S3.
+"""Create browser-friendly JPEG derivatives for TIFF files in S3.
 
-Safe features:
-- Existing JPGs are never overwritten unless --overwrite is supplied.
-- --missing-only inventories existing JPGs once and submits only missing work.
-- Source-size and decoded-pixel limits protect constrained environments.
-- --dry-run plans work without downloading, converting, or uploading files.
+Safety behavior:
+- Existing JPGs are not overwritten unless --overwrite is supplied.
+- --missing-only inventories existing JPGs and submits only missing work.
+- Source-size and decoded-pixel limits protect AWS CloudShell.
+- Pillow decompression-bomb checks are disabled only so image dimensions can
+  be read; this script's stricter --max-pixels limit is then enforced before
+  image decoding, resizing, or JPEG creation.
+- --dry-run plans work without uploading files.
 """
 
 import argparse
@@ -82,8 +85,7 @@ def iter_tiffs(s3, args) -> Iterator[str]:
             yield key
 
 
-# NEW BLOCK. The old script had no destination-prefix inventory.
-# Previously every TIFF was submitted and convert_one() performed a HEAD request.
+# NEW: The old script had no destination inventory and submitted every TIFF.
 def list_existing_jpegs(s3, args) -> set[str]:
     existing: set[str] = set()
     paginator = s3.get_paginator("list_objects_v2")
@@ -101,8 +103,7 @@ def list_existing_jpegs(s3, args) -> set[str]:
 def convert_one(s3, args, key: str):
     target = destination_key(key, args.source_prefix, args.destination_prefix)
 
-    # ORIGINAL SAFETY CHECK, RETAINED.
-    # This protects against races even after the missing-only inventory.
+    # ORIGINAL SAFETY CHECK RETAINED: protects against a race after inventory.
     if not args.overwrite and object_exists(s3, args.bucket, target):
         return "skipped", key, target
 
@@ -125,6 +126,9 @@ def convert_one(s3, args, key: str):
         with Image.open(io.BytesIO(source_bytes)) as image:
             width, height = image.size
             pixels = width * height
+
+            # UPDATED: every oversized TIFF, including 200M+ pixel files,
+            # is cleanly skipped before decoding/resizing.
             if args.max_pixels and pixels > args.max_pixels:
                 logger.warning(
                     "skipped-pixels: %s (%d pixels exceeds %d)",
@@ -135,6 +139,7 @@ def convert_one(s3, args, key: str):
                 return "skipped", key, target
 
             image = ImageOps.exif_transpose(image)
+
             if image.mode not in ("RGB", "L"):
                 if "A" in image.getbands():
                     background = Image.new("RGB", image.size, "white")
@@ -160,6 +165,10 @@ def convert_one(s3, args, key: str):
             )
             output.seek(0)
 
+    # DEFENSE IN DEPTH: if Pillow still raises its exception, skip safely.
+    except Image.DecompressionBombError as exc:
+        logger.warning("skipped-decompression-bomb: %s (%s)", key, exc)
+        return "skipped", key, target
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise RuntimeError(f"Unable to decode TIFF {key}: {exc}") from exc
 
@@ -188,7 +197,7 @@ def parse_args():
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
 
-    # NEW ARGUMENT. The old parse_args() did not contain this option.
+    # NEW: prefilter work using the existing JPG inventory.
     parser.add_argument(
         "--missing-only",
         action="store_true",
@@ -211,21 +220,24 @@ def main() -> int:
         raise SystemExit("ERROR: --max-dimension must be at least 1")
     if not 1 <= args.quality <= 100:
         raise SystemExit("ERROR: --quality must be between 1 and 100")
+    if args.max_source_mb < 1:
+        raise SystemExit("ERROR: --max-source-mb must be at least 1")
+    if args.max_pixels < 1:
+        raise SystemExit("ERROR: --max-pixels must be at least 1")
     if args.missing_only and args.overwrite:
         raise SystemExit(
             "ERROR: --missing-only and --overwrite cannot be used together."
         )
 
-    # Prevent Pillow's default decompression-bomb limit from conflicting with
-    # the explicit --max-pixels guard. The explicit guard still decides.
-    Image.MAX_IMAGE_PIXELS = args.max_pixels if args.max_pixels else None
+    # UPDATED: disable Pillow's separate 2x bomb threshold. The script's
+    # stricter max-pixels check above is enforced before image decoding.
+    Image.MAX_IMAGE_PIXELS = None
 
     s3 = boto3.client("s3")
 
-    # ORIGINAL BLOCK WAS:
+    # ORIGINAL:
     # sources = list(iter_tiffs(s3, args))
-    #
-    # UPDATED BLOCK: inventory all eligible TIFFs, then prefilter missing JPGs.
+    # UPDATED: inventory TIFFs, then prefilter missing derivatives.
     all_sources = list(iter_tiffs(s3, args))
 
     if args.missing_only:
@@ -251,9 +263,7 @@ def main() -> int:
     else:
         sources = all_sources
 
-    # IMPORTANT CORRECTION:
-    # The old broken update incorrectly indented this executor under `else`.
-    # This block must run after either mode has selected `sources`.
+    # CORRECTED SCOPE: this block runs for both normal and missing-only modes.
     total = len(sources)
     logger.info("Eligible TIFF files: %d", total)
     counters = {"created": 0, "skipped": 0, "planned": 0, "failed": 0}
@@ -300,6 +310,5 @@ def main() -> int:
     return 1 if counters["failed"] else 0
 
 
-# ORIGINAL ENTRY POINT, RETAINED OUTSIDE main().
 if __name__ == "__main__":
     sys.exit(main())
