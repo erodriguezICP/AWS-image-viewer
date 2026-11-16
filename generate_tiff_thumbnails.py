@@ -44,22 +44,23 @@ def object_exists(s3, bucket, key):
         raise
 
 
-def iter_tiffs(s3, args):
-    byte_limit = int(args.max_source_mb * 1024 * 1024)
+def list_existing_jpegs(s3, args):
+    """Return the JPG derivative keys that already exist in S3."""
+    existing = set()
+
     paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=args.bucket, Prefix=args.source_prefix):
+
+    for page in paginator.paginate(
+        Bucket=args.bucket,
+        Prefix=args.destination_prefix,
+    ):
         for item in page.get("Contents", []):
             key = item.get("Key", "")
-            size = int(item.get("Size", 0))
-            if "/.AppleDouble/" in key:
-                logger.info("Skipping AppleDouble metadata: %s", key)
-                continue
-            if not key.lower().endswith(TIFF_EXTENSIONS):
-                continue
-            if size > byte_limit:
-                logger.warning("Skipping oversized TIFF before download: %s (%.1f MB > %.1f MB limit)", key, size / 1048576, args.max_source_mb)
-                continue
-            yield key
+
+            if key.lower().endswith((".jpg", ".jpeg")):
+                existing.add(key)
+
+    return existing
 
 
 def convert_one(s3, args, key):
@@ -104,7 +105,15 @@ def parse_args():
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     parser.add_argument("--max-source-mb", type=float, default=DEFAULT_MAX_SOURCE_MB)
     parser.add_argument("--max-pixels", type=int, default=DEFAULT_MAX_PIXELS)
-    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+    "--missing-only",
+    action="store_true",
+    help=(
+        "Inventory existing JPG derivatives first and submit only TIFFs "
+        "whose expected JPG does not already exist."
+    ),
+)
+
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -121,7 +130,49 @@ def main():
 
     s3 = boto3.client("s3")
     logger.info("Workers: %d | max source: %.1f MB | max pixels: %d", args.workers, args.max_source_mb, args.max_pixels)
-    sources = list(iter_tiffs(s3, args))
+    all_sources = list(iter_tiffs(s3, args))
+
+if args.missing_only:
+    if args.overwrite:
+        raise SystemExit(
+            "ERROR: --missing-only and --overwrite cannot be used together."
+        )
+
+    print(
+        f"Inventorying existing JPGs under "
+        f"s3://{args.bucket}/{args.destination_prefix}",
+        flush=True,
+    )
+
+    existing_jpegs = list_existing_jpegs(s3, args)
+
+    sources = [
+        key
+        for key in all_sources
+        if destination_key(
+            key,
+            args.source_prefix,
+            args.destination_prefix,
+        )
+        not in existing_jpegs
+    ]
+
+    completed_count = len(all_sources) - len(sources)
+
+    print(
+        f"TIFF originals found: {len(all_sources)}",
+        flush=True,
+    )
+    print(
+        f"Existing JPG derivatives: {completed_count}",
+        flush=True,
+    )
+    print(
+        f"Missing JPG derivatives to process: {len(sources)}",
+        flush=True,
+    )
+else:
+    sources = all_sources
     total = len(sources)
     logger.info("Eligible TIFF files: %d", total)
     counters = {"created": 0, "skipped": 0, "planned": 0, "failed": 0}
