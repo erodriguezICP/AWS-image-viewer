@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getUrl, list } from "aws-amplify/storage";
+import { fetchAuthSession } from "aws-amplify/auth";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import "./App.css";
 
 type ArchiveImage = {
@@ -320,45 +323,72 @@ export default function App() {
         setSelected(null);
     }
 
-    async function downloadOriginal(image: DisplayImage): Promise<void> {
-        try {
-            setDownloading(true);
-            setWarning("");
-            const signedUrl = await getImageUrl(image.path);
-            const response = await fetch(signedUrl, { method: "GET", mode: "cors" });
-            if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+function safeDownloadName(name: string): string {
+  return name.replace(/[\\/\r\n"]/g, "_");
+}
 
-            const blobUrl = URL.createObjectURL(await response.blob());
-            const link = document.createElement("a");
-            link.href = blobUrl;
-            link.download = image.name;
-            link.style.display = "none";
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-            window.setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-        } catch (reason) {
-            console.error("Blob download failed; opening signed source URL:", reason);
-            try {
-                const signedUrl = await getImageUrl(image.path);
-                const link = document.createElement("a");
-                link.href = signedUrl;
-                link.download = image.name;
-                link.target = "_blank";
-                link.rel = "noopener noreferrer";
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
-                setWarning("The file opened in a new tab because the browser blocked the direct download. Use the browser download button to save it.");
-            } catch (fallbackReason) {
-                console.error("Download fallback failed:", fallbackReason);
-                setWarning("The selected source file is not currently downloadable.");
-                setDownloadAvailability("unavailable");
-            }
-        } finally {
-            setDownloading(false);
-        }
-    }
+async function createAttachmentUrl(
+  image: DisplayImage,
+): Promise<string> {
+  const session = await fetchAuthSession();
+  const credentials = session.credentials;
+
+  if (!credentials) {
+    throw new Error(
+      "AWS credentials are unavailable for this session.",
+    );
+  }
+
+  const client = new S3Client({
+    region: S3_BUCKET.region,
+    credentials,
+  });
+
+  const command = new GetObjectCommand({
+    Bucket: S3_BUCKET.bucketName,
+    Key: image.path,
+
+    // This S3 response override makes the original object download
+    // rather than display as a browser page.
+    ResponseContentDisposition:
+      `attachment; filename="${safeDownloadName(image.name)}"`,
+
+    ResponseContentType: "application/octet-stream",
+  });
+
+  return getSignedUrl(client, command, {
+    expiresIn: URL_EXPIRATION_SECONDS,
+  });
+}
+
+async function downloadOriginal(
+  image: DisplayImage,
+): Promise<void> {
+  try {
+    setDownloading(true);
+    setWarning("");
+
+    const downloadUrl = await createAttachmentUrl(image);
+    const link = document.createElement("a");
+
+    link.href = downloadUrl;
+    link.download = image.name;
+    link.style.display = "none";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } catch (reason) {
+    console.error("Direct download failed:", reason);
+
+    setWarning(
+      "The selected source file could not be downloaded. " +
+      "Check the browser console and S3 permissions.",
+    );
+  } finally {
+    setDownloading(false);
+  }
+}
 
     async function viewSourcePhoto(image: DisplayImage): Promise<void> {
         try {
