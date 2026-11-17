@@ -1,255 +1,534 @@
-:root {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #151515;
-  background: #f4f4f1;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-}
+/* =========================================================
+   ICP DIGITAL ARCHIVES
+   App.css
 
-* { box-sizing: border-box; }
+   Thumbnail behavior:
+   - Shows the FULL image
+   - Does not crop portrait or landscape images
+   - Preserves image aspect ratio
+   - Keeps thumbnail/card sizes stable
+   ========================================================= */
 
-html, body, #root {
-  width: 100%;
-  min-width: 320px;
-  height: 100%;
-  min-height: 100%;
-  margin: 0;
-  padding: 0;
-  background: #f4f4f1;
-}
-
-body { min-height: 100vh; overflow: hidden; }
-button, input, select { font: inherit; }
-button, a, input, select { outline-offset: 3px; }
-button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #ef3f36; }
 
 /* =========================================================
-   AUTHENTICATED APP
-   NEW: reserve 52px for account bar and give the archive
-   the remaining viewport height. This prevents the viewer
-   from being pushed below/cut off by the top bar.
+   GLOBAL
    ========================================================= */
-.authenticated-app {
-  --account-bar-height: 52px;
-  width: 100%;
-  height: 100vh;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: #f4f4f1;
+
+* {
+  box-sizing: border-box;
 }
 
-/* OLD BLOCK:
-.account-bar {
-  position: sticky;
-  top: 0;
-  min-height: 52px;
-  ...
-}
-The archive still used 100vh, so the bar + viewer exceeded the viewport.
-*/
-.account-bar {
-  position: relative;
-  flex: 0 0 var(--account-bar-height);
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
   width: 100%;
-  height: var(--account-bar-height);
-  min-height: var(--account-bar-height);
+  min-height: 100%;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  background: #f4f4f2;
+  color: #111;
+}
+
+
+/* =========================================================
+   APP
+   ========================================================= */
+
+.app {
+  min-height: 100vh;
+  background: #f4f4f2;
+}
+
+
+/* =========================================================
+   TOP HEADER
+   ========================================================= */
+
+.top-bar {
+  height: 52px;
+  background: #171717;
+  color: #ffffff;
+
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  padding: 8px 20px;
-  color: #fff;
-  background: #151515;
-  border-bottom: 1px solid #3b3b3b;
-  box-sizing: border-box;
-  z-index: 1000;
+
+  padding: 0 12px;
 }
 
-.account-copy { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
-.account-copy span { overflow: hidden; color: #cfcfcf; font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
-.sign-out-button { flex: 0 0 auto; min-height: 34px; padding: 7px 13px; color: #151515; font-weight: 750; background: #fff; border: 1px solid #fff; border-radius: 5px; cursor: pointer; }
-.sign-out-button:hover { background: #e8e8e4; }
-
-/* Login / create-account branding */
-.auth-brand { display: flex; align-items: center; gap: 16px; max-width: 460px; margin: 34px auto 18px; padding: 0 20px; }
-.auth-mark { display: grid; place-items: center; width: 72px; height: 56px; color: #fff; font-size: 1.15rem; font-weight: 900; background: #151515; }
-.auth-brand h1 { margin: 0; color: #151515; font-size: 1.6rem; line-height: 1.1; }
-.auth-brand p { margin: 6px 0 0; color: #60605c; font-size: .9rem; }
-[data-amplify-authenticator] {
-  --amplify-components-authenticator-router-border-color: #d3d1ca;
-  --amplify-components-authenticator-router-box-shadow: 0 12px 35px rgba(0,0,0,.12);
-  --amplify-components-button-primary-background-color: #151515;
-  --amplify-components-button-primary-hover-background-color: #333;
-  --amplify-components-tabs-item-active-border-color: #151515;
-  --amplify-components-tabs-item-active-color: #151515;
-  --amplify-components-fieldcontrol-focus-border-color: #151515;
-  min-height: 100vh;
-  background: #f5f4ef;
+.top-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
+
+.top-bar-title {
+  font-weight: 700;
+}
+
+.top-bar-user {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.sign-out-button {
+  background: #ffffff;
+  color: #111111;
+
+  border: 1px solid #d7d7d7;
+  border-radius: 5px;
+
+  padding: 10px 14px;
+
+  font-weight: 700;
+  cursor: pointer;
+}
+
 
 /* =========================================================
-   ARCHIVE LAYOUT
-   OLD: min-height: 100vh and sidebar height: 100vh.
-   NEW: 100% of the space remaining below the account bar.
+   MAIN LAYOUT
    ========================================================= */
-.archive-shell {
-  display: grid;
-  grid-template-columns: 325px minmax(0, 1fr);
+
+.archive-layout {
+  display: flex;
   width: 100%;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  background: #f4f4f1;
+  min-height: calc(100vh - 52px);
 }
 
-.authenticated-app > .archive-shell { flex: 1 1 auto; height: auto; min-height: 0; overflow: hidden; }
+
+/* =========================================================
+   SIDEBAR
+   ========================================================= */
 
 .sidebar {
-  position: relative;
-  top: auto;
-  align-self: stretch;
+  width: 307px;
+  min-width: 307px;
+
+  background: #171717;
+  color: #ffffff;
+
+  padding: 34px 11px;
+}
+
+.sidebar-brand {
+  padding-bottom: 28px;
+  margin-bottom: 36px;
+
+  border-bottom: 1px solid #444444;
+}
+
+.sidebar h2,
+.sidebar h3 {
+  color: #ffffff;
+}
+
+.filter-group {
+  margin-bottom: 20px;
+}
+
+.filter-group label {
+  display: block;
+
+  margin-bottom: 10px;
+
+  color: #ffffff;
+
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12px;
+  font-weight: 700;
+
+  text-transform: uppercase;
+}
+
+.filter-group input,
+.filter-group select {
+  display: block;
+
+  width: 100%;
+  height: 47px;
+
+  padding: 0 12px;
+
+  background: #ffffff;
+  color: #333333;
+
+  border: 1px solid #dddddd;
+  border-radius: 5px;
+
+  font-size: 14px;
+}
+
+.clear-filters-button {
+  width: 100%;
+
+  padding: 13px 10px;
+
+  background: transparent;
+  color: #ffffff;
+
+  border: 1px solid #666666;
+  border-radius: 5px;
+
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sidebar-count {
   display: flex;
-  flex-direction: column;
-  width: 325px;
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 30px 20px;
-  color: #fff;
-  background: #151515;
-  border-right: 1px solid #2b2b2b;
+  justify-content: space-between;
+
+  margin-top: 25px;
+  padding-top: 20px;
+
+  border-top: 1px solid #3d3d3d;
+
+  font-size: 13px;
 }
 
-.brand { display: grid; grid-template-columns: minmax(0,1fr) 1px auto; align-items: center; gap: 16px; min-height: 92px; padding-bottom: 25px; border-bottom: 1px solid #444; }
-.icp-logo { display: flex; align-items: center; gap: 9px; }
-.icp-symbol { display: grid; place-items: center; width: 66px; height: 50px; color: #fff; font-size: 20px; font-weight: 900; border-left: 8px solid #fff; border-right: 8px solid #fff; }
-.icp-name { font-family: Georgia, "Times New Roman", serif; font-size: 13px; font-weight: 700; line-height: .92; }
-.brand-divider { width: 1px; height: 60px; background: #555; }
-.archive-brand-title { font-size: 22px; font-weight: 750; line-height: 1.08; }
-
-.static-filters { display: flex; flex-direction: column; gap: 9px; margin-top: 26px; }
-.static-filters label { margin-top: 10px; color: #ddd; font-size: .78rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-.static-filters input, .static-filters select { width: 100%; min-height: 48px; padding: 10px 12px; color: #151515; background: #fff; border: 1px solid #d2d2cf; border-radius: 6px; }
-.clear-button { min-height: 46px; margin-top: 14px; color: #fff; font-weight: 700; background: transparent; border: 1px solid #777; border-radius: 6px; cursor: pointer; }
-.clear-button:hover { color: #151515; background: #fff; }
-.result-count { display: flex; align-items: center; justify-content: space-between; margin-top: 18px; padding-top: 14px; border-top: 1px solid #3a3a3a; }
-.result-count span { color: #bbb; font-size: .8rem; }
-.result-count strong { font-size: 1.15rem; }
-
-.main-content {
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow-x: hidden;
-  overflow-y: auto;
-  background: #f4f4f1;
+.sidebar-count strong {
+  font-size: 16px;
 }
 
-.top-header { padding: 26px 34px 18px; background: #f4f4f1; border-bottom: 1px solid #d8d8d3; }
-.top-header h1 { margin: 0; font-size: clamp(1.65rem, 2.5vw, 2.4rem); line-height: 1.05; }
-.top-header p { margin: 7px 0 0; color: #666; }
 
-.content-layout { display: grid; grid-template-columns: minmax(0,1fr); min-height: 0; }
-.content-layout.details-open { grid-template-columns: minmax(0,1fr) minmax(300px, 360px); }
-.results-area { min-width: 0; padding: 20px 28px 28px; }
-.results-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
-.results-summary { display: flex; flex-direction: column; gap: 3px; }
-.results-summary span { color: #71716d; font-size: .83rem; }
-.pagination, .bottom-pagination { display: flex; align-items: center; justify-content: center; gap: 10px; }
-.pagination button, .bottom-pagination button { min-height: 38px; padding: 7px 13px; color: #151515; font-weight: 700; background: #fff; border: 1px solid #bdbdb8; border-radius: 5px; cursor: pointer; }
-.pagination button:disabled, .bottom-pagination button:disabled { opacity: .4; cursor: default; }
-.pagination span, .bottom-pagination span { min-width: 110px; color: #555; font-size: .83rem; text-align: center; }
-.bottom-pagination { margin-top: 20px; padding-top: 16px; border-top: 1px solid #d8d8d3; }
-
-/* Smaller gaps keep the 4 x 3 desktop grid compact. */
-.image-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; align-items: stretch; }
-.image-card { display: flex; min-width: 0; flex-direction: column; padding: 0; overflow: hidden; color: #151515; text-align: left; background: #fff; border: 1px solid #d7d7d2; border-radius: 7px; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
-.image-card:hover:not(:disabled) { border-color: #999; box-shadow: 0 3px 10px rgba(0,0,0,.08); }
-.image-card.selected { border-color: #151515; box-shadow: 0 0 0 2px #151515; }
-.image-card:disabled { cursor: default; }
 /* =========================================================
-   SMALLER ARCHIVE THUMBNAILS
-   OLD HEIGHT: 170px
-   NEW HEIGHT: 125px
-   The complete image remains visible with object-fit: contain.
+   MAIN CONTENT AREA
    ========================================================= */
-.thumbnail { display: grid; place-items: center; width: 100%; height: 125px; overflow: hidden; background: #e9e9e5; }
-.thumbnail img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; background: #e9e9e5; }
-.thumbnail-skeleton { width: 100%; height: 100%; background: linear-gradient(90deg,#e5e5e1 25%,#f2f2ef 50%,#e5e5e1 75%); background-size: 200% 100%; animation: shimmer 1.25s infinite linear; }
-.no-preview { display: grid; place-items: center; width: 100%; height: 100%; padding: 16px; color: #777; font-size: .78rem; text-align: center; }
-.card-details { display: flex; min-width: 0; flex-direction: column; gap: 2px; padding: 8px 10px 9px; }
-.card-details strong { overflow: hidden; font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
-.card-details span, .card-details small { overflow: hidden; color: #666; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
 
-.details-panel { min-width: 0; height: 100%; padding: 18px; overflow-y: auto; background: #fff; border-left: 1px solid #d8d8d3; }
-.details-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.details-header strong { min-width: 0; overflow-wrap: anywhere; }
-.details-header button { width: 32px; height: 32px; color: #151515; background: #eee; border: 0; border-radius: 50%; cursor: pointer; }
-.details-preview { display: grid; place-items: center; width: 100%; min-height: 230px; margin-top: 16px; overflow: hidden; background: #ecece8; }
-.details-preview img { display: block; width: 100%; max-height: 420px; object-fit: contain; }
-.details-actions { display: grid; gap: 9px; margin-top: 14px; }
-.view-source-button, .download-button { min-height: 42px; padding: 9px 12px; font-weight: 700; border-radius: 5px; cursor: pointer; }
-.view-source-button { color: #151515; background: #fff; border: 1px solid #aaa; }
-.download-button { color: #fff; background: #151515; border: 1px solid #151515; }
-.view-source-button:disabled, .download-button:disabled { opacity: .45; cursor: default; }
-.download-status { min-height: 18px; color: #666; font-size: .78rem; }
-.download-status.available { color: #28613b; }
-.download-status.unavailable { color: #9a3029; }
-.metadata { margin: 18px 0 0; }
-.metadata div { padding: 10px 0; border-top: 1px solid #e0e0dc; }
-.metadata dt { color: #777; font-size: .7rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
-.metadata dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: .82rem; }
-
-.status, .warning { margin: 18px 28px; padding: 12px 14px; border-radius: 5px; }
-.status.error { color: #7d211a; background: #ffe6e3; border: 1px solid #e9aaa4; }
-.warning { margin: 0 0 16px; color: #664c00; background: #fff4cc; border: 1px solid #e7cf74; }
-
-.archive-loading-screen { position: fixed; inset: 0; z-index: 3000; display: grid; place-items: center; padding: 24px; background: rgba(244,244,241,.97); }
-.archive-loading-card { width: min(440px,100%); padding: 32px; text-align: center; background: #fff; border: 1px solid #d7d7d2; border-radius: 8px; box-shadow: 0 15px 45px rgba(0,0,0,.12); }
-.archive-loading-card h2 { margin: 16px 0 7px; }
-.archive-loading-card p { margin: 0; color: #666; line-height: 1.45; }
-.spinner { width: 34px; height: 34px; margin: auto; border: 4px solid #dadad5; border-top-color: #151515; border-radius: 50%; animation: spin .8s linear infinite; }
-.archive-loading-progress { height: 4px; margin-top: 20px; overflow: hidden; background: #e4e4df; border-radius: 999px; }
-.archive-loading-progress::after { display: block; width: 40%; height: 100%; content: ""; background: #151515; animation: progress 1.2s ease-in-out infinite; }
-
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes shimmer { to { background-position: -200% 0; } }
-@keyframes progress { 0% { transform: translateX(-120%); } 100% { transform: translateX(250%); } }
-
-@media (max-width: 1180px) {
-  .archive-shell { grid-template-columns: 280px minmax(0,1fr); }
-  .sidebar { width: 280px; }
-  .image-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
-  .content-layout.details-open { grid-template-columns: minmax(0,1fr) 320px; }
+.archive-main {
+  flex: 1;
+  min-width: 0;
+  background: #f4f4f2;
 }
 
-@media (max-width: 900px) {
-  .authenticated-app { height: auto; min-height: 100vh; overflow: visible; }
-  body { overflow-y: auto; }
-  .archive-shell { grid-template-columns: 1fr; height: auto; overflow: visible; }
-  .authenticated-app > .archive-shell { height: auto; overflow: visible; }
-  .sidebar { position: relative; width: 100%; height: auto; overflow: visible; }
-  .main-content { height: auto; overflow: visible; }
-  .image-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  .content-layout.details-open { grid-template-columns: 1fr; }
-  .details-panel { height: auto; border-top: 1px solid #d8d8d3; border-left: 0; }
+
+/* =========================================================
+   ARCHIVE TITLE
+   ========================================================= */
+
+.archive-header {
+  padding: 25px 33px 20px;
+
+  background: #f4f4f2;
+
+  border-bottom: 1px solid #d9d9d5;
 }
 
-@media (max-width: 700px) {
-  .account-copy span { display: none; }
-  .auth-brand { align-items: flex-start; }
-  .results-area { padding: 16px; }
-  .top-header { padding: 20px 18px 15px; }
-  .results-toolbar { align-items: flex-start; flex-direction: column; }
+.archive-header h1 {
+  margin: 0 0 5px;
+
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 38px;
+  line-height: 1.1;
+
+  color: #111111;
 }
 
-@media (max-width: 560px) {
-  .image-grid { grid-template-columns: 1fr; }
-  .thumbnail { height: 160px; }
+.archive-subtitle {
+  margin: 0;
+
+  font-size: 15px;
+  color: #666666;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+
+/* =========================================================
+   RESULTS / PAGINATION
+   ========================================================= */
+
+.results-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 20px;
+
+  padding: 21px 27px;
 }
+
+.results-count {
+  font-weight: 700;
+}
+
+.results-subtext {
+  margin-top: 6px;
+
+  color: #777777;
+  font-size: 13px;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+
+  gap: 12px;
+}
+
+.pagination button {
+  min-height: 40px;
+
+  padding: 0 14px;
+
+  background: #ffffff;
+  color: #111111;
+
+  border: 1px solid #cccccc;
+  border-radius: 5px;
+
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pagination button:disabled {
+  color: #999999;
+  background: #f7f7f7;
+  cursor: default;
+}
+
+.page-number {
+  white-space: nowrap;
+
+  color: #555555;
+  font-size: 13px;
+}
+
+
+/* =========================================================
+   IMAGE GRID
+   ========================================================= */
+
+.thumbnail-grid,
+.image-grid {
+  display: grid;
+
+  /*
+   * Matches the four-column layout visible in your screenshot.
+   */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+
+  gap: 10px;
+
+  padding: 0 27px 27px;
+}
+
+
+/* =========================================================
+   THUMBNAIL CARD
+   ========================================================= */
+
+.thumbnail-card,
+.image-card {
+  min-width: 0;
+
+  background: #ffffff;
+
+  border: 1px solid #d4d4d0;
+  border-radius: 7px;
+
+  overflow: hidden;
+}
+
+
+/* =========================================================
+   THUMBNAIL IMAGE AREA
+
+   IMPORTANT:
+   The fixed height prevents the archive grid from jumping
+   around while images load.
+   ========================================================= */
+
+.thumbnail-container,
+.thumbnail-wrapper,
+.image-wrapper {
+  width: 100%;
+  height: 220px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  overflow: hidden;
+
+  background: #eeeeeb;
+}
+
+
+/* =========================================================
+   FULL IMAGE THUMBNAIL FIX
+
+   object-fit: contain is the important change.
+
+   DO NOT use:
+       object-fit: cover;
+
+   "cover" crops the image.
+
+   "contain" shows the entire image while preserving its
+   original proportions.
+   ========================================================= */
+
+.thumbnail-container img,
+.thumbnail-wrapper img,
+.image-wrapper img,
+.thumbnail-image {
+  width: 100%;
+  height: 100%;
+
+  object-fit: contain;
+  object-position: center center;
+
+  display: block;
+
+  background: #eeeeeb;
+}
+
+
+/* =========================================================
+   CARD INFORMATION
+   ========================================================= */
+
+.thumbnail-info,
+.image-info,
+.card-content {
+  padding: 10px;
+}
+
+.thumbnail-title,
+.image-title,
+.card-title {
+  margin: 0 0 7px;
+
+  color: #111111;
+
+  font-size: 13px;
+  line-height: 1.25;
+  font-weight: 700;
+
+  overflow-wrap: anywhere;
+}
+
+.thumbnail-metadata,
+.image-metadata,
+.card-metadata {
+  margin: 0 0 5px;
+
+  color: #555555;
+
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+
+/* =========================================================
+   THUMBNAIL LINKS / BUTTONS
+   ========================================================= */
+
+.thumbnail-card button,
+.image-card button {
+  cursor: pointer;
+}
+
+.thumbnail-card img,
+.image-card img {
+  max-width: 100%;
+}
+
+
+/* =========================================================
+   LOADING
+   ========================================================= */
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 300px;
+
+  color: #555555;
+  font-size: 15px;
+}
+
+
+/* =========================================================
+   ERROR MESSAGE
+   ========================================================= */
+
+.error-message {
+  margin: 25px;
+
+  padding: 15px;
+
+  background: #fff4f4;
+  color: #8a1f1f;
+
+  border: 1px solid #d9aaaa;
+  border-radius: 5px;
+}
+
+
+/* =========================================================
+   RESPONSIVE LAYOUT
+   ========================================================= */
+
+@media (max-width: 1400px) {
+
+  .thumbnail-grid,
+  .image-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+}
+
+
+@media (max-width: 1050px) {
+
+  .thumbnail-grid,
+  .image-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+}
+
+
+@media (max-width: 750px) {
+
+  .archive-layout {
+    display: block;
+  }
+
+  .sidebar {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .results-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .thumbnail-grid,
+  .image-grid {
+    grid-template-columns: 1fr;
+  }
+
+}
+
+
+/* =========================================================
+   EXTRA SAFETY
+
+   Prevent images from stretching beyond their containers.
+   ========================================================= */
+
+img {
+  max-width: 100%;
+}
+
+
+/* =========================================================
+   END
+   ========================================================= */
