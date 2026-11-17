@@ -2,18 +2,19 @@
 """Generate JPEG thumbnails from TIFF objects stored in Amazon S3.
 
 Missing-only behavior:
-- Lists all source TIFF keys once.
+- Lists source TIFF keys once.
 - Lists existing target JPG/JPEG keys once.
-- Builds a queue containing only TIFFs whose expected JPG is absent.
-- Retains a final object-exists check to protect against race conditions.
+- Queues only TIFFs whose expected JPG is absent when --missing-only is used.
+- Retains a final existence check to avoid race-condition overwrites.
 
 Safety behavior:
-- Skips macOS /.AppleDouble/ metadata objects.
+- Excludes macOS /.AppleDouble/ metadata objects.
+- Checks S3 ContentLength BEFORE reading the object body into RAM.
 - Skips sources larger than --max-source-mb.
 - Skips images larger than --max-pixels.
 - Skips Pillow decompression-bomb errors.
-- Skips corrupt or unreadable TIFFs instead of terminating the batch.
-- Continues processing when an individual object fails.
+- Skips corrupt/unreadable TIFFs without terminating the batch.
+- Continues after an individual object failure.
 """
 
 import argparse
@@ -30,7 +31,6 @@ logger = logging.getLogger("tiff-thumbnails")
 
 
 def object_exists(s3, bucket, key):
-    """Return True when an S3 object exists; re-raise unexpected S3 errors."""
     try:
         s3.head_object(Bucket=bucket, Key=key)
         return True
@@ -43,7 +43,6 @@ def object_exists(s3, bucket, key):
 
 
 def target_key_for(source_key, source_prefix, target_prefix):
-    """Map a source TIFF key to its expected target JPG key."""
     if source_key.startswith(source_prefix):
         relative = source_key[len(source_prefix):]
     else:
@@ -55,7 +54,6 @@ def target_key_for(source_key, source_prefix, target_prefix):
 
 
 def list_tiffs(s3, bucket, prefix):
-    """Yield TIFF keys under the source prefix, excluding AppleDouble metadata."""
     paginator = s3.get_paginator("list_objects_v2")
 
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
@@ -71,7 +69,6 @@ def list_tiffs(s3, bucket, prefix):
 
 
 def list_existing_jpegs(s3, bucket, prefix):
-    """Return a set containing existing JPG/JPEG keys under the target prefix."""
     existing = set()
     paginator = s3.get_paginator("list_objects_v2")
 
@@ -85,7 +82,6 @@ def list_existing_jpegs(s3, bucket, prefix):
 
 
 def build_work_queue(s3, args):
-    """Build the source queue, filtering to missing targets when requested."""
     source_keys = list(list_tiffs(s3, args.bucket, args.source_prefix))
     source_total = len(source_keys)
 
@@ -97,7 +93,7 @@ def build_work_queue(s3, args):
     )
 
     if not args.missing_only:
-        logger.info("Missing-only mode is disabled; queued %d TIFF files", source_total)
+        logger.info("Missing-only mode disabled; queued %d TIFF files", source_total)
         return source_keys, source_total, None
 
     existing_jpegs = list_existing_jpegs(s3, args.bucket, args.target_prefix)
@@ -131,34 +127,36 @@ def process_one(key, args):
     s3 = boto3.client("s3")
     target = target_key_for(key, args.source_prefix, args.target_prefix)
 
-    # Defense in depth. The target might be created after inventory but before
-    # this worker starts. Do not overwrite it unless --overwrite was supplied.
+    # Defense in depth: target may appear after inventory but before processing.
     if not args.overwrite and object_exists(s3, args.bucket, target):
         return "skipped-existing", key, target
 
     if args.dry_run:
         return "planned", key, target
 
-    # This is also filtered during inventory, but retain the worker-side guard.
+    # Worker-side copy of the inventory guard.
     if "/.AppleDouble/" in key:
         logger.warning("skipped-appledouble: %s", key)
         return "skipped-appledouble", key, target
 
- response = s3.get_object(Bucket=args.bucket, Key=key)
+    # IMPORTANT CORRECTION:
+    # get_object returns ContentLength without requiring us to read Body.
+    # Check that value BEFORE Body.read() so 200+ MB TIFFs are not loaded into RAM.
+    response = s3.get_object(Bucket=args.bucket, Key=key)
+    source_size = response.get("ContentLength", 0)
 
-source_size = response.get("ContentLength", 0)
+    if args.max_source_mb and source_size > args.max_source_mb * 1024 * 1024:
+        logger.warning(
+            "skipped-size: %s (%0.1f MB exceeds %s MB)",
+            key,
+            source_size / (1024 * 1024),
+            args.max_source_mb,
+        )
+        response["Body"].close()
+        return "skipped-size", key, target
 
-if args.max_source_mb and source_size > args.max_source_mb * 1024 * 1024:
-    logger.warning(
-        "skipped-size: %s (%0.1f MB exceeds %s MB)",
-        key,
-        source_size / (1024 * 1024),
-        args.max_source_mb,
-    )
+    source_bytes = response["Body"].read()
     response["Body"].close()
-    return "skipped-size", key, target
-
-source_bytes = response["Body"].read()
 
     try:
         with Image.open(io.BytesIO(source_bytes)) as image:
