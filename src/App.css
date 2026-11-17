@@ -2,11 +2,15 @@
    ICP DIGITAL ARCHIVES
    App.css
 
+   STABLE VERSION + FULL IMAGE THUMBNAIL FIX
+
    Thumbnail behavior:
    - Shows the FULL image
    - Does not crop portrait or landscape images
    - Preserves image aspect ratio
-   - Keeps thumbnail/card sizes stable
+   - Fixed 180px thumbnail viewport
+   - Prevents oversized grid rows
+   - Preserves existing four-column layout
    ========================================================= */
 
 
@@ -298,20 +302,22 @@ body {
 
 /* =========================================================
    IMAGE GRID
+
+   Keep the existing stable four-column layout.
    ========================================================= */
 
 .thumbnail-grid,
 .image-grid {
   display: grid;
 
-  /*
-   * Matches the four-column layout visible in your screenshot.
-   */
   grid-template-columns: repeat(4, minmax(0, 1fr));
 
   gap: 10px;
 
   padding: 0 27px 27px;
+
+  /* Prevent unusual image dimensions from stretching rows. */
+  align-items: start;
 }
 
 
@@ -334,21 +340,24 @@ body {
 
 /* =========================================================
    THUMBNAIL IMAGE AREA
+   UPDATED
 
    IMPORTANT:
-   The fixed height prevents the archive grid from jumping
-   around while images load.
+   The viewport has an explicit fixed height.
+
+   This prevents portrait newspaper scans, TIFF thumbnails,
+   transfer-folder screenshots, or unusually large images
+   from determining the grid row height.
    ========================================================= */
 
 .thumbnail-container,
 .thumbnail-wrapper,
 .image-wrapper {
   width: 100%;
-  height: 220px;
 
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  height: 180px;
+  min-height: 180px;
+  max-height: 180px;
 
   overflow: hidden;
 
@@ -358,16 +367,16 @@ body {
 
 /* =========================================================
    FULL IMAGE THUMBNAIL FIX
+   UPDATED
 
-   object-fit: contain is the important change.
+   object-fit: contain:
+   - Shows the entire image
+   - Preserves aspect ratio
+   - Does not crop
+   - Does not stretch
 
-   DO NOT use:
-       object-fit: cover;
-
-   "cover" crops the image.
-
-   "contain" shows the entire image while preserving its
-   original proportions.
+   Explicit 180px height prevents the browser from using the
+   original image dimensions to determine grid height.
    ========================================================= */
 
 .thumbnail-container img,
@@ -375,10 +384,12 @@ body {
 .image-wrapper img,
 .thumbnail-image {
   width: 100%;
-  height: 100%;
+
+  height: 180px;
+  max-height: 180px;
 
   object-fit: contain;
-  object-position: center center;
+  object-position: center;
 
   display: block;
 
@@ -431,9 +442,32 @@ body {
   cursor: pointer;
 }
 
+
+/* =========================================================
+   CARD IMAGE SAFETY
+   UPDATED
+
+   This catches images that are direct descendants of the
+   card instead of one of the wrapper classes above.
+
+   It prevents those images from expanding to their natural
+   TIFF/JPEG dimensions.
+   ========================================================= */
+
 .thumbnail-card img,
 .image-card img {
+  width: 100%;
+
+  height: 180px;
   max-width: 100%;
+  max-height: 180px;
+
+  object-fit: contain;
+  object-position: center;
+
+  display: block;
+
+  background: #eeeeeb;
 }
 
 
@@ -521,7 +555,7 @@ body {
 /* =========================================================
    EXTRA SAFETY
 
-   Prevent images from stretching beyond their containers.
+   Prevent non-card images from exceeding their containers.
    ========================================================= */
 
 img {
