@@ -144,17 +144,21 @@ def process_one(key, args):
         logger.warning("skipped-appledouble: %s", key)
         return "skipped-appledouble", key, target
 
-    response = s3.get_object(Bucket=args.bucket, Key=key)
-    source_bytes = response["Body"].read()
+ response = s3.get_object(Bucket=args.bucket, Key=key)
 
-    if args.max_source_mb and len(source_bytes) > args.max_source_mb * 1024 * 1024:
-        logger.warning(
-            "skipped-size: %s (%0.1f MB exceeds %s MB)",
-            key,
-            len(source_bytes) / (1024 * 1024),
-            args.max_source_mb,
-        )
-        return "skipped-size", key, target
+source_size = response.get("ContentLength", 0)
+
+if args.max_source_mb and source_size > args.max_source_mb * 1024 * 1024:
+    logger.warning(
+        "skipped-size: %s (%0.1f MB exceeds %s MB)",
+        key,
+        source_size / (1024 * 1024),
+        args.max_source_mb,
+    )
+    response["Body"].close()
+    return "skipped-size", key, target
+
+source_bytes = response["Body"].read()
 
     try:
         with Image.open(io.BytesIO(source_bytes)) as image:
