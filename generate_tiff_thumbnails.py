@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""
-TIFF -> JPEG thumbnail generator for S3.
+"""Generate JPEG thumbnails from TIFF objects in S3.
 
-Safety behavior included:
-- Skips thumbnails that already exist unless --overwrite is supplied.
-- Skips /.AppleDouble/ metadata objects.
-- Skips source objects larger than --max-source-mb.
-- Skips images larger than --max-pixels before resizing.
-- Skips Pillow decompression-bomb failures.
-- Skips unreadable/corrupt/non-image TIFF objects instead of terminating the run.
+Stable behavior retained:
+- Existing target JPGs are skipped unless --overwrite is supplied.
+- Source-size and pixel guards are applied before thumbnail generation.
+- Per-file failures do not terminate the full archive job.
+
+Corrections incorporated:
+- Supports --missing-only for compatibility with run-tiff-thumbnail-job-safe.sh.
+- Skips macOS /.AppleDouble/ metadata objects.
+- Skips unreadable/corrupt TIFFs instead of raising a fatal RuntimeError.
 """
 
 import argparse
@@ -56,15 +57,15 @@ def process_one(key, args):
     s3 = boto3.client("s3")
     target = target_key_for(key, args.source_prefix, args.target_prefix)
 
-    # ORIGINAL SAFETY CHECK RETAINED: skip thumbnails already created.
+    # Stable missing-target behavior. --missing-only is accepted explicitly by
+    # the safe launcher; existing targets remain protected unless --overwrite.
     if not args.overwrite and object_exists(s3, args.bucket, target):
         return "skipped", key, target
 
     if args.dry_run:
         return "planned", key, target
 
-    # NEW: AppleDouble objects are macOS metadata/resource-fork files and are
-    # not source photographs. Do not send them to Pillow for TIFF decoding.
+    # CORRECTION: .AppleDouble entries are macOS metadata/resource-fork files.
     if "/.AppleDouble/" in key:
         logger.warning("skipped-appledouble: %s", key)
         return "skipped", key, target
@@ -86,7 +87,6 @@ def process_one(key, args):
             width, height = image.size
             pixels = width * height
 
-            # RETAINED: every oversized TIFF is skipped before resizing.
             if args.max_pixels and pixels > args.max_pixels:
                 logger.warning(
                     "skipped-pixels: %s (%d pixels exceeds %d)",
@@ -123,12 +123,11 @@ def process_one(key, args):
             )
             output.seek(0)
 
-    # DEFENSE IN DEPTH: oversized/decompression-bomb TIFFs are skipped safely.
     except Image.DecompressionBombError as exc:
         logger.warning("skipped-decompression-bomb: %s (%s)", key, exc)
         return "skipped", key, target
-    # NEW: a corrupt, fake, or otherwise unreadable TIFF no longer kills the job.
     except (UnidentifiedImageError, OSError, ValueError) as exc:
+        # CORRECTION: a bad TIFF is logged/skipped rather than killing the run.
         logger.warning("skipped-unreadable: %s (%s)", key, exc)
         return "skipped", key, target
 
@@ -153,6 +152,12 @@ def parse_args():
     parser.add_argument("--max-source-mb", type=int, default=200)
     parser.add_argument("--max-pixels", type=int, default=200_000_000)
     parser.add_argument("--overwrite", action="store_true")
+    # CORRECTION: required by run-tiff-thumbnail-job-safe.sh.
+    parser.add_argument(
+        "--missing-only",
+        action="store_true",
+        help="Only generate thumbnails that do not already exist",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -181,7 +186,6 @@ def main():
                 logger.info("[%d/%d] %s: %s -> %s", index, total, status, source, target)
             except Exception:
                 counts["failed"] += 1
-                # Per-file failure is logged, but the remaining archive continues.
                 logger.exception("[%d/%d] failed: %s", index, total, key)
 
     logger.info(
