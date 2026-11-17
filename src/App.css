@@ -163,18 +163,25 @@ The archive still used 100vh, so the bar + viewer exceeded the viewport.
 .pagination span, .bottom-pagination span { min-width: 110px; color: #555; font-size: .83rem; text-align: center; }
 .bottom-pagination { margin-top: 20px; padding-top: 16px; border-top: 1px solid #d8d8d3; }
 
-.image-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; align-items: stretch; }
+/* Smaller gaps keep the 4 x 3 desktop grid compact. */
+.image-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; align-items: stretch; }
 .image-card { display: flex; min-width: 0; flex-direction: column; padding: 0; overflow: hidden; color: #151515; text-align: left; background: #fff; border: 1px solid #d7d7d2; border-radius: 7px; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
 .image-card:hover:not(:disabled) { border-color: #999; box-shadow: 0 3px 10px rgba(0,0,0,.08); }
 .image-card.selected { border-color: #151515; box-shadow: 0 0 0 2px #151515; }
 .image-card:disabled { cursor: default; }
-.thumbnail { display: grid; place-items: center; width: 100%; height: 170px; overflow: hidden; background: #e9e9e5; }
-.thumbnail img { width: 100%; height: 100%; object-fit: contain; background: #e9e9e5; }
+/* =========================================================
+   SMALLER ARCHIVE THUMBNAILS
+   OLD HEIGHT: 170px
+   NEW HEIGHT: 125px
+   The complete image remains visible with object-fit: contain.
+   ========================================================= */
+.thumbnail { display: grid; place-items: center; width: 100%; height: 125px; overflow: hidden; background: #e9e9e5; }
+.thumbnail img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; background: #e9e9e5; }
 .thumbnail-skeleton { width: 100%; height: 100%; background: linear-gradient(90deg,#e5e5e1 25%,#f2f2ef 50%,#e5e5e1 75%); background-size: 200% 100%; animation: shimmer 1.25s infinite linear; }
 .no-preview { display: grid; place-items: center; width: 100%; height: 100%; padding: 16px; color: #777; font-size: .78rem; text-align: center; }
-.card-details { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding: 11px 12px 13px; }
-.card-details strong { overflow: hidden; font-size: .88rem; text-overflow: ellipsis; white-space: nowrap; }
-.card-details span, .card-details small { overflow: hidden; color: #666; font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
+.card-details { display: flex; min-width: 0; flex-direction: column; gap: 2px; padding: 8px 10px 9px; }
+.card-details strong { overflow: hidden; font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
+.card-details span, .card-details small { overflow: hidden; color: #666; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
 
 .details-panel { min-width: 0; height: 100%; padding: 18px; overflow-y: auto; background: #fff; border-left: 1px solid #d8d8d3; }
 .details-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -240,7 +247,7 @@ The archive still used 100vh, so the bar + viewer exceeded the viewport.
 
 @media (max-width: 560px) {
   .image-grid { grid-template-columns: 1fr; }
-  .thumbnail { height: 220px; }
+  .thumbnail { height: 160px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
