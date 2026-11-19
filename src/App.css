@@ -1,57 +1,111 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
+# Safely append the Amplify authentication-screen CSS to the current stable
+# src/App.css without replacing the archive viewer's existing styles.
 
-/* =========================================================
-   FINAL AUTH SCREEN BACKGROUND OVERRIDE
-   Keeps the stable signed-in archive unchanged.
-   ========================================================= */
+CSS_FILE="${1:-src/App.css}"
+START_MARKER="/* AUTH_SCREEN_OVERRIDES_START */"
+END_MARKER="/* AUTH_SCREEN_OVERRIDES_END */"
 
-html,
+if [[ ! -f "$CSS_FILE" ]]; then
+  echo "ERROR: $CSS_FILE was not found."
+  echo "Run this script from the AWS-image-viewer repository root."
+  exit 1
+fi
+
+# Refuse to operate if the stable archive selectors are missing. This prevents
+# accidentally treating an auth-only stylesheet as the stable App.css.
+required_selectors=(
+  ".archive-shell"
+  ".sidebar"
+  ".image-grid"
+  ".image-card"
+  ".thumbnail"
+  ".details-panel"
+)
+
+for selector in "${required_selectors[@]}"; do
+  if ! grep -Fq "$selector" "$CSS_FILE"; then
+    echo "ERROR: Stable selector $selector is missing from $CSS_FILE."
+    echo "No changes were made. Restore the stable App.css first."
+    exit 1
+  fi
+done
+
+backup="${CSS_FILE}.before-auth-css-$(date +%Y%m%d-%H%M%S).bak"
+cp "$CSS_FILE" "$backup"
+
+# Remove a previously installed copy of this managed block so the update is
+# repeatable and never creates duplicate authentication rules.
+tmp_file="$(mktemp)"
+awk -v start="$START_MARKER" -v end="$END_MARKER" '
+  index($0, start) { skipping=1; next }
+  index($0, end)   { skipping=0; next }
+  !skipping        { print }
+' "$CSS_FILE" > "$tmp_file"
+
+# Remove the unsafe global black-background block if it exists exactly in the
+# previously used form. The archive viewer must retain its stable background.
+python3 - "$tmp_file" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+unsafe = """html,
 body,
 #root {
   background: #000000;
 }
+"""
+text = text.replace(unsafe, "")
+path.write_text(text.rstrip() + "\n", encoding="utf-8")
+PY
 
-/* Amplify Authenticator can paint the outer viewport with its own theme
-   variables/elements. These selectors force only the auth-screen canvas black. */
+cat >> "$tmp_file" <<'CSS'
+
+/* AUTH_SCREEN_OVERRIDES_START */
+/* =========================================================
+   AMPLIFY AUTHENTICATION SCREEN
+   ---------------------------------------------------------
+   This section is scoped to Amplify Authenticator.
+   It does not replace or restyle the signed-in archive UI.
+   ========================================================= */
+
+/* Black canvas surrounding the authentication card. */
 [data-amplify-authenticator] {
   min-height: 100vh !important;
   background-color: #000000 !important;
   background-image: none !important;
+
   --amplify-colors-background-primary: #000000;
   --amplify-colors-background-secondary: #ffffff;
 }
 
+/* Keep only the outer authentication containers black. */
 [data-amplify-authenticator] > div,
-[data-amplify-authenticator] [data-amplify-container],
-[data-amplify-authenticator] [data-amplify-form] {
+[data-amplify-authenticator] [data-amplify-container] {
   background-color: #000000 !important;
   background-image: none !important;
 }
 
-/* Keep the actual sign-in/create-account surface white. */
+/* Keep the login and create-account surface white. */
 [data-amplify-authenticator] [data-amplify-router],
 [data-amplify-authenticator] [data-amplify-router] > div,
 [data-amplify-authenticator] .amplify-tabs,
 [data-amplify-authenticator] .amplify-tabs__panel,
-[data-amplify-authenticator] form {
-  background-color: #ffffff !important;
-}
-
-/* Keep custom ICP branding at the top of the authentication card white. */
+[data-amplify-authenticator] form,
 [data-amplify-authenticator] .auth-brand {
   background-color: #ffffff !important;
 }
+/* AUTH_SCREEN_OVERRIDES_END */
+CSS
 
-/* Restore the stable signed-in application backgrounds after authentication. */
-.authenticated-app,
-.archive-shell,
-.main-content,
-.top-header {
-  background-color: #f4f4f2 !important;
-}
+mv "$tmp_file" "$CSS_FILE"
 
-/* Preserve the stable black signed-in account bar/sidebar. */
-.account-bar,
-.sidebar {
-  background-color: #171717 !important;
-}
+echo "Updated: $CSS_FILE"
+echo "Backup:  $backup"
+echo
+echo "The stable archive CSS was preserved."
+echo "Next run: npm run build"
