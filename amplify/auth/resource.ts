@@ -1,12 +1,11 @@
-import { defineAuth } from '@aws-amplify/backend';
-import { preSignUp } from './pre-sign-up/resource';
+import { defineAuth } from "@aws-amplify/backend";
+import { preSignUp } from "./pre-sign-up/resource";
 
 /**
- * Define and configure the authentication resource.
+ * Authentication configuration for ICP Digital Archives.
  *
- * Users sign in with their email address.
- * The preSignUp Lambda validates that new accounts
- * use an authorized ICP email domain.
+ * Users authenticate using email.
+ * New registrations are validated by the pre-sign-up trigger.
  */
 export const auth = defineAuth({
   loginWith: {
