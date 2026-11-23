@@ -1,19 +1,9 @@
-import { defineAuth } from '@aws-amplify/backend';
-import { preSignUp } from './pre-sign-up/resource';
+import { defineFunction } from "@aws-amplify/backend";
 
-/**
- * Define and configure the authentication resource.
- *
- * Users sign in with their email address.
- * The preSignUp Lambda validates that new accounts
- * use an authorized ICP email domain.
- */
-export const auth = defineAuth({
-  loginWith: {
-    email: true,
-  },
+export const preSignUp = defineFunction({
+  name: "pre-sign-up",
 
-  triggers: {
-    preSignUp,
+  environment: {
+    ALLOW_DOMAIN: "icp.org",
   },
 });
