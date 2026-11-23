@@ -10,6 +10,9 @@ const backend = defineBackend({
   data,
 });
 
+/*
+ * Existing external archive S3 bucket.
+ */
 const customBucketStack = backend.createStack("archive-bucket-stack");
 
 const archiveBucket = Bucket.fromBucketAttributes(
@@ -21,6 +24,12 @@ const archiveBucket = Bucket.fromBucketAttributes(
   }
 );
 
+/*
+ * Expose the existing archive bucket configuration to the Amplify frontend.
+ *
+ * The actual AWS authorization is controlled by the IAM policies
+ * attached to the Cognito group roles below.
+ */
 backend.addOutput({
   storage: {
     aws_region: archiveBucket.env.region,
@@ -43,11 +52,26 @@ backend.addOutput({
   },
 });
 
+/*
+ * Archive S3 policy.
+ *
+ * Members of the authorized Cognito groups can:
+ *
+ * - List objects under Key Manifest/
+ * - List objects under Key Manifest Thumbnails/
+ * - Read/download objects under Key Manifest/
+ * - Read thumbnail objects under Key Manifest Thumbnails/
+ *
+ * No PutObject, DeleteObject, or other write permission is granted.
+ */
 const archivePolicy = new Policy(
   backend.stack,
-  "archiveBucketAuthPolicy",
+  "archiveBucketGroupAccessPolicy",
   {
     statements: [
+      /*
+       * Read original archive objects and generated thumbnails.
+       */
       new PolicyStatement({
         effect: Effect.ALLOW,
         actions: ["s3:GetObject"],
@@ -57,6 +81,10 @@ const archivePolicy = new Policy(
         ],
       }),
 
+      /*
+       * Allow directory/object listing, but only for the archive
+       * prefixes used by the viewer.
+       */
       new PolicyStatement({
         effect: Effect.ALLOW,
         actions: ["s3:ListBucket"],
@@ -76,6 +104,31 @@ const archivePolicy = new Policy(
   }
 );
 
-backend.auth.resources.authenticatedUserIamRole.attachInlinePolicy(
+/*
+ * Cognito group authorization.
+ *
+ * Unlike the previous implementation, the archive policy is NOT
+ * attached to authenticatedUserIamRole.
+ *
+ * Therefore, simply having a verified Cognito account does not
+ * automatically grant archive S3 permissions.
+ */
+const { groups } = backend.auth.resources;
+
+/*
+ * Standard approved archive users.
+ */
+groups["ARCHIVE_USERS"].role.attachInlinePolicy(
+  archivePolicy
+);
+
+/*
+ * Archive administrators.
+ *
+ * For now ADMIN users receive the same read/list archive permissions.
+ * Additional administrative permissions can be added separately later
+ * without changing ARCHIVE_USERS.
+ */
+groups["ARCHIVE_ADMINS"].role.attachInlinePolicy(
   archivePolicy
 );
