@@ -1,19 +1,24 @@
-import type { PreSignUpTriggerHandler } from 'aws-lambda';
+import type { PreSignUpTriggerHandler } from "aws-lambda";
+import { env } from "$amplify/env/pre-sign-up";
 
 export const handler: PreSignUpTriggerHandler = async (event) => {
-  const email = event.request.userAttributes.email
-    ?.toLowerCase()
-    .trim();
+  const email = event.request.userAttributes["email"]
+    ?.trim()
+    .toLowerCase();
 
   if (!email) {
-    throw new Error('An email address is required.');
+    throw new Error("An email address is required.");
   }
 
-  const domain = email.split('@').pop();
+  const parts = email.split("@");
 
-  if (domain !== 'icp.org') {
+  if (
+    parts.length !== 2 ||
+    !parts[0] ||
+    parts[1] !== env.ALLOW_DOMAIN.toLowerCase()
+  ) {
     throw new Error(
-      'Registration is restricted to authorized ICP email accounts.'
+      "Registration is restricted to authorized ICP email accounts."
     );
   }
 
