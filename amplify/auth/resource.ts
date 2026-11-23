@@ -1,18 +1,9 @@
-import { defineAuth } from "@aws-amplify/backend";
-import { preSignUp } from "./pre-sign-up/resource";
+import { defineFunction } from "@aws-amplify/backend";
 
-/**
- * Authentication configuration for ICP Digital Archives.
- *
- * Users authenticate using email.
- * New registrations are validated by the pre-sign-up trigger.
- */
-export const auth = defineAuth({
-  loginWith: {
-    email: true,
-  },
+export const preSignUp = defineFunction({
+  name: "pre-sign-up",
 
-  triggers: {
-    preSignUp,
+  environment: {
+    ALLOW_DOMAIN: "icp.org",
   },
 });
